@@ -99,19 +99,21 @@ export default function Dashboard({ globalSearch }: { globalSearch: string }) {
           </div>
         </Card>
 
-        <Card title="即将开放" extra={<Badge tone="warning">后续版本</Badge>}>
+        <Card title="业务台账" extra={<Badge tone="primary">已可用</Badge>}>
           <div className="flex flex-col gap-3">
             {[
-              { icon: CalendarHeart, title: "纪念日全局提醒", desc: "生日 / 上舰周年 / 观看纪念日，托盘 Toast 与快捷祝福" },
-              { icon: Gift, title: "舰礼寄送台账", desc: "寄送批次、地址审核、发货状态与脱敏导出" },
-              { icon: Wallet, title: "主播记账本", desc: "大航海收入归集、支出统计与批次成本核算" },
+              { key: "reminder", icon: CalendarHeart, title: "纪念日提醒", desc: `待处理 ${bootstrap?.reminderCount ?? 0} 条 · 祝福话术与处理标记` },
+              { key: "gifts", icon: Gift, title: "舰礼寄送台账", desc: "寄送批次、地址审核、发货状态与脱敏导出" },
+              { key: "ledger", icon: Wallet, title: "主播记账本", desc: "大航海收入归集、支出统计与批次成本核算" },
             ].map((f) => (
-              <div key={f.title} className="glass-soft rounded-xl p-3 flex items-start gap-3 row-hover">
+              <button key={f.key} onClick={() => goTo(f.key)} className="glass-soft rounded-xl p-3 flex items-start gap-3 row-hover text-left cursor-pointer">
                 <f.icon size={17} className="text-accent mt-0.5 shrink-0" />
                 <div><p className="text-sm font-medium">{f.title}</p><p className="text-xs text-muted mt-1 leading-relaxed">{f.desc}</p></div>
-              </div>
+              </button>
             ))}
-            <SectionHint tone="warning">本期同步能力仅手动导入，自动抓取与扫码登录留待后续接入，导入通道始终可用。</SectionHint>
+            <SectionHint tone="neutral">
+              自动抓取默认关闭；{bootstrap?.syncStatus.enabled ? "已在设置中启用，可按需扫码登录。" : "需要时可在设置中自行启用并扫码登录。"}手动导入始终可用。
+            </SectionHint>
           </div>
         </Card>
       </div>

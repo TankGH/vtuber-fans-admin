@@ -69,4 +69,17 @@ export const ADDRESS_STATUS_TEXT: Record<string, string> = {
 };
 export const ACTIVITY_TEXT: Record<string, string> = {
   import: "名单导入", backup: "数据备份", restore: "恢复操作", theme: "主题切换", profile: "档案维护",
+  reminder: "纪念日提醒", gift: "舰礼台账", ledger: "记账本", sync: "自动同步",
+};
+
+export const REMINDER_LABEL: Record<string, string> = {
+  birthday: "生日", guard_anniversary: "上舰周年", watch_anniversary: "观看纪念日",
+};
+
+export const SHIPMENT_TEXT: Record<string, string> = {
+  pending: "待寄送", address_missing: "地址待补", shipped: "已寄送", invalid_address: "地址无效",
+};
+
+export const LOGIN_STATE_TEXT: Record<string, string> = {
+  disabled: "自动抓取已关闭", not_logged_in: "未登录", logged_in: "登录有效", expired: "登录已失效",
 };

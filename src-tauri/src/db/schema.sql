@@ -1,4 +1,4 @@
--- 全量 schema：一次建表，F3/F4/F5 本期只建不使用业务
+-- 全量 schema：一次建表，F1–F7 共用；F3/F4/F5 业务表在启动时同样就绪
 CREATE TABLE IF NOT EXISTS app_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -101,6 +101,8 @@ CREATE TABLE IF NOT EXISTS gift_shipment (
   tracking_no TEXT,
   updated_at TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gift_shipment_batch_uid ON gift_shipment(batch_id, uid);
+CREATE INDEX IF NOT EXISTS idx_gift_shipment_status ON gift_shipment(shipment_status);
 
 CREATE TABLE IF NOT EXISTS ledger_entry (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,6 +114,9 @@ CREATE TABLE IF NOT EXISTS ledger_entry (
   guard_event_id INTEGER,
   note TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_ledger_occurred ON ledger_entry(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_ledger_batch ON ledger_entry(batch_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_event ON ledger_entry(guard_event_id);
 
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,

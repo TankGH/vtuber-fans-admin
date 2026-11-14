@@ -1,36 +1,36 @@
 # 详细设计 · vtuber-fans-admin
 
 > **权威需求来源**：[`../requirement-doc.md`](../requirement-doc.md)。本文为实现层详细设计；架构分层与安全模型见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)，后续能力见 [`ROADMAP.md`](./ROADMAP.md)。
-> **本期范围（用户确认）**：F1 / F2（导入与数据结构）/ F6 / F7 完整可用；F3 / F4 / F5 仅占位页 + 表结构 + IPC 契约；**零抓取代码**。
+> **当前范围（v0.2.0）**：F1–F7 均可用；F3 / F4 / F5 为完整业务页面；同步引擎为**用户可选启用**的网页端低频快照（默认关闭，启用后按需扫码登录），不含 WebSocket 实时事件订阅。
 
 ## 1. 需求追溯矩阵
 
-| 功能域 | 需求点 | 本期状态 | 交付物 |
+| 功能域 | 需求点 | 当前状态 | 交付物 |
 | --- | --- | --- | --- |
 | F1 粉丝终身档案 | UID 主键、昵称变更历史 | ✅ 实现 | `fan_profile` / `fan_nickname_history` + `profile_*` |
 | F1 | 首次互动 / 生日 / 上舰周年 / 观看纪念日 / 地址 / 备注 | ✅ 实现 | DTO + 表单 + 详情侧滑 |
 | F1 | 多来源录入、手动锁定字段 | ✅ 实现（自动同步来源暂缺） | `manual_locked_fields` + 合并状态机 |
 | F1 | 同 UID 合并保留最早首次互动时间 | ✅ 实现 | `profile.rs` / `import.rs` 单事务 |
 | F1 | 地址生日加密 + UI 默认脱敏 | ✅ 实现 | 字段级 AES-256-GCM + 脱敏 DTO |
-| F2 大航海 | L1 HTTP 快照 / L2 WebSocket | ⏸ 占位（本期零抓取） | `SyncSource` trait + ROADMAP 阶段一/三 |
+| F2 大航海 | L1 HTTP 快照 / L2 WebSocket | ✅ L1 实现（可选启用）/ L2 未实现 | `sync::bilibili::BiliSource` + `sync::apply_snapshot`；WBI 签名、扫码登录、加密凭证 |
 | F2 | L3 手动补录（CSV / Excel） | ✅ 实现 | `import.rs` + 导入向导 |
 | F2 | 快照 diff / 有效期核算 / 疑似到期 | ✅ 数据层 | `guard.rs` 查询与核算；写入来自导入 |
 | F2 | 失败降级、状态栏文案 | ✅ 基础框架 | `error.rs` 错误码 + 前端状态栏 |
-| F3 纪念日提醒 | 汇总卡片 / Toast / 快捷操作 / 托盘角标 | ⏸ 占位 | `reminder_ack` 表 + 占位页 |
-| F4 舰礼寄送 | 地址审核 / 寄送批次 / 发货状态 / 隐私导出 | ⏸ 占位 | `gift_batch` / `gift_shipment` 表 + 占位页 |
-| F5 记账本 | 收入归集 / 支出 / 趋势图 / 批次成本 | ⏸ 占位 | `ledger_entry` 表 + 占位页 |
+| F3 纪念日提醒 | 汇总卡片 / Toast / 快捷操作 / 顶栏角标 | ✅ 实现 | `reminder_ack` 表 + `reminder.rs` + `Reminders.tsx` + 原生 Toast |
+| F4 舰礼寄送 | 地址审核 / 寄送批次 / 发货状态 / 隐私导出 | ✅ 实现 | `gift_batch` / `gift_shipment` 表 + `gifts.rs` + `Gifts.tsx` |
+| F5 记账本 | 收入归集 / 支出 / 趋势图 / 批次成本 | ✅ 实现 | `ledger_entry` 表 + `ledger.rs` + `Ledger.tsx`（recharts 按需加载） |
 | F6 备份恢复 | 启动自动备份、7 份滚动 | ✅ 实现 | `backup.rs` + `manifest.json` |
 | F6 | 一键恢复向导、重启完成 | ✅ 实现 | `restore.json` 标记 + 恢复流程 |
 | F6 | 加密库导出 / 脱敏 CSV 导出 | ✅ 实现 | `backup_*` + 二次确认 |
 | F6 | 上次备份时间常驻、超 3 天温和提示 | ✅ 实现 | 状态栏 + 概览健康横幅 |
 | F7 设置与主题 | 三套主题即时切换 | ✅ 实现 | `data-theme` CSS 变量 |
 | F7 | 备份目录、托盘行为 | ✅ 实现 | `app_settings` + 设置页 |
-| F7 | Cookie / 快照时刻 / WS 开关 | ⏸ 禁用态占位 | 配置字段保留，UI 标注「待同步引擎启用」 |
+| F7 | 自动抓取开关 / 房间号 / 快照时刻 / 扫码登录 | ✅ 实现 | `sync_set_enabled` 需二次确认；`SyncPanel.tsx` 提供开关、扫码弹窗与登录状态 |
 | Windows 易用性 | 双击即用 / 托盘 / Toast / 人类可读错误 | ✅ 实现（Toast 用于备份结果） | Tauri 插件 + `error.rs` |
 
 ## 2. 数据库设计（全量 DDL）
 
-> 一次建全量，避免后续重复迁移；F3/F4/F5 表本期只建不使用业务。敏感字段一律密文 BLOB。
+> 一次建全量，避免后续重复迁移；F3/F4/F5 表已全部接入业务。敏感字段一律密文 BLOB，B 站凭证单独存为 `bili_session.enc`。
 
 ### 2.1 核心表（依据需求文档 3.3）
 
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS fan_profile (
   address_status TEXT NOT NULL DEFAULT 'none', -- none/pending/valid/invalid/shipped
   note TEXT,
   manual_locked_fields TEXT NOT NULL DEFAULT '[]', -- JSON array
-  source TEXT NOT NULL DEFAULT 'manual',          -- manual/import/(后续 sync)
+  source TEXT NOT NULL DEFAULT 'manual',          -- manual / import / snapshot / websocket
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS guard_snapshot_member (
 );
 CREATE INDEX IF NOT EXISTS idx_guard_member_uid ON guard_snapshot_member(uid);
 
--- 大航海事件（本期来源仅 manual / import）
+-- 大航海事件（当前来源 manual / import；snapshot diff 推断尚未实现）
 CREATE TABLE IF NOT EXISTS guard_event (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   uid TEXT NOT NULL,
@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_guard_event_at ON guard_event(event_at);
 CREATE INDEX IF NOT EXISTS idx_guard_event_uid ON guard_event(uid);
 ```
 
-### 2.2 扩展表（本期占位或辅助）
+### 2.2 扩展表（台账 / 同步 / 辅助）
 
 ```sql
 CREATE TABLE IF NOT EXISTS import_batch (
@@ -186,9 +186,20 @@ CREATE TABLE IF NOT EXISTS activity_log (
 | `backup_export_db` | `dest_path`, `confirm` | `ExportResult` | 加密库导出 |
 | `backup_export_csv` | `dest_path` | `ExportResult` | 脱敏 CSV 导出 |
 | `restore_prepare` | `backup_id`, `confirm` | `RestorePlan` | 写 `restore.json`，先自动备份当前库 |
-| `settings_get` | — | `SettingsDto` | 主题 / 目录 / 托盘 / 同步配置占位 |
-| `settings_update` | `SettingsInput` | `SettingsDto` | 即时生效（主题由前端切 CSS 变量） |
+| `settings_get` | — | `SettingsDto` | 主题 / 目录 / 托盘 / 同步开关与提醒配置 |
+| `settings_update` | `SettingsInput` | `SettingsDto` | 即时生效；不负责开启同步 |
 | `open_data_dir` | — | `()` | 打开本地数据目录 |
+| `reminder_list` / `reminder_ack` / `reminder_notify` | `ReminderQuery` / `ReminderAckInput` / — | `ReminderDto[]` / `ReminderDto` / `bool` | F3 汇总、处理标记、每日一次原生 Toast |
+| `gift_batch_list` / `gift_batch_create` | — / `GiftBatchInput` | `GiftBatchDto[]` / `GiftBatchDto` | F4 批次 |
+| `gift_shipment_list` / `gift_shipment_update` / `gift_address_set_status` | `batchId` / `GiftShipmentInput` / `uid,status` | `GiftShipmentDto[]` / `GiftShipmentDto` / `()` | F4 逐条寄送与地址审核 |
+| `gift_shipment_reveal_address` / `gift_batch_export` | `id, confirm` / `batchId, confirm` | `AddressDto` / `ExportResult` | 完整地址二次确认 + 脱敏导出 |
+| `ledger_list` / `ledger_create` / `ledger_delete` | `LedgerQuery` / `LedgerInput` / `id,confirm` | `LedgerEntryDto[]` / `LedgerEntryDto` / `()` | F5 账目 |
+| `ledger_summary` / `ledger_sync_events` | — | `LedgerSummaryDto` | 月度汇总与事件幂等归集 |
+| `sync_status` / `sync_set_enabled` | — / `enabled,confirm` | `SyncStatusDto` | 状态读取与用户显式开关（开启需二次确认） |
+| `sync_qr_start` / `sync_qr_poll` | — | `SyncQrDto` / `SyncQrPollDto` | 本机生成二维码与按需登录轮询 |
+| `sync_logout` / `sync_snapshot_now` | — | `SyncStatusDto` / `SyncSnapshotResultDto` | 清除凭证与手动触发快照 |
+
+> 所有 `sync_*` 命令都在 `spawn_blocking` 中执行，避免同步 HTTP 阻塞主窗口；`sync_set_enabled` 之外没有任何命令会改变开关状态。
 
 **DTO 对齐**：`src/types/dto.ts` 与 `src-tauri/src/models.rs` 一一对应；`src/lib/ipc.ts` 统一封装 `invoke` 并把错误码映射为中文文案。dev 环境（非 Tauri WebView）走演示数据适配器，保证 `npm run dev` 可独立验证全部 UI。
 
@@ -245,9 +256,9 @@ CREATE TABLE IF NOT EXISTS activity_log (
 | `E_BACKUP_DIR` | 备份目录不可写，请重新选择目录 | 前往设置更换目录 |
 | `E_BACKUP_IO` | 备份写入失败，可能是磁盘空间不足 | 清理磁盘后重试 |
 | `E_RESTORE_VERIFY` | 备份校验未通过，未改动当前数据 | 选择其它备份 |
-| `E_SYNC_COOKIE` | Cookie 过期（待同步引擎启用后生效） | 后续版本扫码登录 |
-| `E_SYNC_NETWORK` | 网络不可达（待同步引擎启用后生效） | 检查网络或手动补录 |
-| `E_SYNC_API` | B 站接口返回异常（待同步引擎启用后生效） | 稍后重试或手动补录 |
+| `E_SYNC_COOKIE` | B 站登录态失效或未登录，请重新扫码登录 | 前往设置重新扫码登录 |
+| `E_SYNC_NETWORK` | 无法连接 B 站，请检查网络后重试 | 检查网络；也可关闭自动抓取并手动导入 |
+| `E_SYNC_API` | B 站接口返回异常，可稍后重试或使用手动导入 | 稍后重试或改用 CSV / Excel 手动导入 |
 | `E_INTERNAL` | 操作未完成，已保留原始数据 | 重试；仍失败则查看诊断信息 |
 
 > 日志只记录错误码、操作类型与行数，**不记录** Cookie、收件人、电话、完整地址、生日与主密钥。
@@ -262,7 +273,7 @@ CREATE TABLE IF NOT EXISTS activity_log (
 
 **CSS 变量**：`--bg` / `--surface` / `--surface-2` / `--border` / `--text` / `--text-muted` / `--primary` / `--accent` / `--success` / `--warning` / `--danger` / `--glow`。切换仅改根元素 `data-theme`，不重启、不重渲染整树。
 
-**全局框架**：固定顶栏（产品标识 / 全局搜索 / 备份状态徽标 / 主题切换 / 最小化到托盘）+ 固定侧栏（概览、粉丝档案、大航海与导入、备份恢复、系统设置 + 「即将开放」分组）+ 固定底部状态栏（数据库位置 / 粉丝总数 / 上次备份时间 / 脱敏模式）。主内容区留出顶栏与底栏高度，表格可横向滚动。
+**全局框架**：固定顶栏（产品标识 / 全局搜索 / 备份状态徽标 / 主题切换 / 最小化到托盘）+ 固定侧栏（概览、粉丝档案、大航海与导入、备份恢复、系统设置 + 「业务台账」分组）+ 固定底部状态栏（数据库位置 / 粉丝总数 / 上次备份时间 / 脱敏模式）。主内容区留出顶栏与底栏高度，表格可横向滚动。
 
 **交互契约**：危险操作（恢复、导出完整地址、展开完整地址）一律红色二次确认弹窗；禁用态降低透明度并附说明文案；卡片入场轻微上浮、按钮点击微缩放、导航悬停渐亮；文字对比度满足长时间阅读；导入向导与表格翻页可键盘完成。
 

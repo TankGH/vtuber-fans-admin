@@ -23,6 +23,9 @@ impl Default for SettingsDto {
             cookie_configured: false,
             data_dir: String::new(),
             onboarding_done: false,
+            sync_enabled: false,
+            room_id: String::new(),
+            reminder_days_ahead: 3,
         }
     }
 }
@@ -51,9 +54,15 @@ pub fn load(data_dir: &Path) -> SettingsDto {
                 if let Some(v) = parsed.get("launchAtStartup").and_then(|v| v.as_bool()) { cfg.launch_at_startup = v; }
                 if let Some(v) = parsed.get("birthdayYearHidden").and_then(|v| v.as_bool()) { cfg.birthday_year_hidden = v; }
                 if let Some(v) = parsed.get("onboardingDone").and_then(|v| v.as_bool()) { cfg.onboarding_done = v; }
+                if let Some(v) = parsed.get("syncEnabled").and_then(|v| v.as_bool()) { cfg.sync_enabled = v; }
+                if let Some(v) = parsed.get("roomId").and_then(|v| v.as_str()) { cfg.room_id = v.to_string(); }
+                if let Some(v) = parsed.get("snapshotHour").and_then(|v| v.as_i64()) { cfg.snapshot_hour = v as i32; }
+                if let Some(v) = parsed.get("websocketEnabled").and_then(|v| v.as_bool()) { cfg.websocket_enabled = v; }
+                if let Some(v) = parsed.get("reminderDaysAhead").and_then(|v| v.as_i64()) { cfg.reminder_days_ahead = v as i32; }
             }
         }
     }
+    cfg.cookie_configured = crate::sync::session_path(data_dir).exists();
     cfg.data_dir = data_dir.to_string_lossy().to_string();
     cfg
 }
@@ -69,13 +78,17 @@ pub fn save(data_dir: &Path, cfg: &SettingsDto) -> AppResult<()> {
         "websocketEnabled": cfg.websocket_enabled,
         "cookieConfigured": cfg.cookie_configured,
         "onboardingDone": cfg.onboarding_done,
+        "syncEnabled": cfg.sync_enabled,
+        "roomId": cfg.room_id,
+        "reminderDaysAhead": cfg.reminder_days_ahead,
     });
     std::fs::write(path(data_dir), serde_json::to_string_pretty(&body)?)
         .map_err(|e| AppError::new("E_BACKUP_DIR", format!("配置写入失败：{e}")))?;
     Ok(())
 }
 
-/// 同步配置（Cookie / 快照时刻 / WS 开关）本期不接受写入，保持禁用态
+/// 常规设置写入。同步开关本身只由 sync_set_enabled 修改，且必须带二次确认；
+/// 此处仅允许房间号、快照时刻与提醒提前天数等不触发外部请求的配置。
 pub fn update(data_dir: &Path, input: SettingsInput) -> AppResult<SettingsDto> {
     let mut cfg = load(data_dir);
     if let Some(v) = input.theme {
@@ -94,6 +107,29 @@ pub fn update(data_dir: &Path, input: SettingsInput) -> AppResult<SettingsDto> {
     if let Some(v) = input.launch_at_startup { cfg.launch_at_startup = v; }
     if let Some(v) = input.birthday_year_hidden { cfg.birthday_year_hidden = v; }
     if let Some(v) = input.onboarding_done { cfg.onboarding_done = v; }
+    if let Some(v) = input.room_id {
+        let trimmed = v.trim().to_string();
+        if !trimmed.is_empty() && !trimmed.chars().all(|c| c.is_ascii_digit()) {
+            return Err(AppError::invalid("直播间房间号只能是纯数字"));
+        }
+        cfg.room_id = trimmed;
+    }
+    if let Some(v) = input.snapshot_hour {
+        if !(0..=23).contains(&v) { return Err(AppError::invalid("每日快照时刻需在 0–23 之间")); }
+        cfg.snapshot_hour = v;
+    }
+    if let Some(v) = input.reminder_days_ahead {
+        if !(0..=14).contains(&v) { return Err(AppError::invalid("提醒提前天数需在 0–14 之间")); }
+        cfg.reminder_days_ahead = v;
+    }
+    save(data_dir, &cfg)?;
+    Ok(cfg)
+}
+
+/// 仅由用户显式开关调用：开启 / 关闭自动抓取
+pub fn set_sync_enabled(data_dir: &Path, enabled: bool) -> AppResult<SettingsDto> {
+    let mut cfg = load(data_dir);
+    cfg.sync_enabled = enabled;
     save(data_dir, &cfg)?;
     Ok(cfg)
 }

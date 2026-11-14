@@ -3,10 +3,13 @@ pub mod commands;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod gifts;
 pub mod guard;
 pub mod import;
+pub mod ledger;
 pub mod models;
 pub mod profile;
+pub mod reminder;
 pub mod settings;
 pub mod sync;
 
@@ -36,7 +39,12 @@ pub fn run() {
             }
 
             app.manage(AppState::new(data_dir.clone())?);
+            app.manage(sync::SyncState::default());
             setup_tray(app)?;
+
+            // 定时快照仅在用户启用同步后生效；关闭时该线程只做本地配置检查，不发起任何外部请求
+            let sync_handle = app.handle().clone();
+            std::thread::spawn(move || sync::schedule_loop(sync_handle));
 
             // 启动自动备份放到后台线程，不阻塞首屏
             let handle = app.handle().clone();
@@ -82,6 +90,27 @@ pub fn run() {
             commands::settings_get,
             commands::settings_update,
             commands::open_data_dir,
+            commands::reminder_list,
+            commands::reminder_ack,
+            commands::reminder_notify,
+            commands::gift_batch_list,
+            commands::gift_batch_create,
+            commands::gift_shipment_list,
+            commands::gift_shipment_update,
+            commands::gift_address_set_status,
+            commands::gift_shipment_reveal_address,
+            commands::gift_batch_export,
+            commands::ledger_list,
+            commands::ledger_create,
+            commands::ledger_delete,
+            commands::ledger_summary,
+            commands::ledger_sync_events,
+            commands::sync_status,
+            commands::sync_set_enabled,
+            commands::sync_qr_start,
+            commands::sync_qr_poll,
+            commands::sync_logout,
+            commands::sync_snapshot_now,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

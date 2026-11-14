@@ -2,10 +2,15 @@ import type {
   ActivityDto,
   BackupDto,
   FanProfileDto,
+  GiftBatchDto,
+  GiftShipmentDto,
   GuardEventDto,
   GuardMemberDto,
+  LedgerEntryDto,
+  ReminderDto,
   SettingsDto,
   SnapshotDto,
+  SyncStatusDto,
 } from "@/types/dto";
 
 // 演示数据基于 ../notes/fans.md 的舰队名册，昵称原样保留（含空格与「丶」）
@@ -82,6 +87,9 @@ export const DEFAULT_SETTINGS: SettingsDto = {
   cookieConfigured: false,
   dataDir: "%APPDATA%\\com.vtuber.fans.admin",
   onboardingDone: true,
+  syncEnabled: false,
+  roomId: "21452505",
+  reminderDaysAhead: 3,
 };
 
 export function seedGuardMembers(): GuardMemberDto[] {
@@ -130,6 +138,74 @@ export function seedActivities(): ActivityDto[] {
     { id: 2, kind: "restore", summary: "从 2026-11-10 备份恢复前自动创建安全备份", createdAt: "2026-11-11T09:12:00+08:00" },
     { id: 1, kind: "profile", summary: "建立首批 13 位舰队成员档案", createdAt: "2026-11-10T10:20:00+08:00" },
   ];
+}
+
+function dateOffset(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+export function seedReminders(): ReminderDto[] {
+  const items: Array<[string, string, ReminderDto["reminderType"], string, number, boolean]> = [
+    ["1000001", "limmax", "birthday", "生日", 0, false],
+    ["1000003", "小白豆浆配油条", "guard_anniversary", "上舰周年", 0, true],
+    ["1000009", "晚 风", "watch_anniversary", "观看纪念日", 1, false],
+    ["1000011", "柚子大姐姐", "birthday", "生日", 2, false],
+    ["1000013", "大幕丶渐起", "guard_anniversary", "上舰周年", 3, false],
+  ];
+  return items.map(([uid, nickname, reminderType, reminderLabel, daysAhead, acked]) => ({
+    uid, nickname, reminderType, reminderLabel,
+    reminderDate: dateOffset(daysAhead), daysAhead, acked,
+    ackedAt: acked ? new Date().toISOString() : null,
+    greeting: `${nickname}，${reminderLabel}快乐！感谢一路相伴。`,
+  }));
+}
+
+export function seedGiftBatches(): GiftBatchDto[] {
+  return [
+    { id: 2, name: "2026 年 11 月舰礼", createdAt: "2026-11-12T10:00:00+08:00", status: "open", memberCount: 5, shippedCount: 2, pendingCount: 3, addressReadyCount: 4 },
+    { id: 1, name: "2026 年 10 月舰礼", createdAt: "2026-10-08T10:00:00+08:00", status: "open", memberCount: 4, shippedCount: 4, pendingCount: 0, addressReadyCount: 4 },
+  ];
+}
+
+export function seedGiftShipments(): GiftShipmentDto[] {
+  const rows: Array<[number, number, string, string, 1 | 2 | 3, GiftShipmentDto["addressStatus"], string | null, GiftShipmentDto["shipmentStatus"], string | null]> = [
+    [1, 2, "1000001", "limmax", 2, "shipped", "上海市 · 上海市 · 浦东新区", "shipped", "SF1234567890"],
+    [2, 2, "1000003", "小白豆浆配油条", 3, "shipped", "广东省 · 深圳市 · 南山区", "shipped", "YT9876543210"],
+    [3, 2, "1000006", "沐星韫", 3, "valid", "浙江省 · 杭州市 · 西湖区", "pending", null],
+    [4, 2, "1000009", "晚 风", 3, "pending", "北京市 · 北京市 · 海淀区", "address_missing", null],
+    [5, 2, "1000002", "54736424", 3, "none", null, "address_missing", null],
+    [6, 1, "1000010", "Tank", 3, "shipped", null, "shipped", "SF0000000001"],
+  ];
+  return rows.map(([id, batchId, uid, nickname, guardLevel, addressStatus, addressMasked, shipmentStatus, trackingNo]) => ({
+    id, batchId, uid, nickname, guardLevel, addressStatus, addressMasked, shipmentStatus, trackingNo,
+    updatedAt: "2026-11-13T09:30:00+08:00",
+  }));
+}
+
+export function seedLedgerEntries(): LedgerEntryDto[] {
+  return [
+    { id: 4, entryType: "income", category: "大航海", amountYuan: 1998, occurredAt: "2026-11-12", batchId: null, guardEventId: 4, note: "limmax 的续费事件" },
+    { id: 3, entryType: "expense", category: "快递费", amountYuan: 68, occurredAt: "2026-11-13", batchId: 2, guardEventId: null, note: "11 月舰礼寄送" },
+    { id: 2, entryType: "expense", category: "舰礼采购", amountYuan: 860.5, occurredAt: "2026-11-10", batchId: 2, guardEventId: null, note: "定制徽章与明信片" },
+    { id: 1, entryType: "income", category: "大航海", amountYuan: 198, occurredAt: "2026-11-11", batchId: null, guardEventId: 3, note: "晚 风 的购买事件" },
+  ];
+}
+
+export function seedSyncStatus(): SyncStatusDto {
+  return {
+    enabled: false,
+    loginState: "disabled",
+    cookieConfigured: false,
+    mid: "",
+    uname: "",
+    roomId: DEFAULT_SETTINGS.roomId,
+    snapshotHour: DEFAULT_SETTINGS.snapshotHour,
+    lastSyncAt: null,
+    lastError: null,
+    message: "自动抓取已关闭，不会发起任何外部请求；名单可通过 CSV / Excel 手动导入。",
+  };
 }
 
 export const SAMPLE_CSV = [

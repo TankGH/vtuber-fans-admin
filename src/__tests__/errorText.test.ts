@@ -35,8 +35,10 @@ describe("错误码与人类可读文案", () => {
     expect(e.message).toBe("磁盘写入失败");
   });
 
-  it("同步相关文案明确标注待启用，避免误导用户", () => {
-    expect(ERROR_TEXT.E_SYNC_COOKIE).toContain("待同步引擎启用");
-    expect(ERROR_TEXT.E_SYNC_NETWORK).toContain("待同步引擎启用");
+  it("同步失败文案给出可执行的恢复动作", () => {
+    expect(ERROR_TEXT.E_SYNC_COOKIE).toContain("重新扫码登录");
+    expect(ERROR_ACTION.E_SYNC_COOKIE).toContain("扫码登录");
+    expect(ERROR_ACTION.E_SYNC_API).toContain("手动导入");
+    expect(ERROR_TEXT.E_SYNC_NETWORK).not.toContain("待同步引擎启用");
   });
 });

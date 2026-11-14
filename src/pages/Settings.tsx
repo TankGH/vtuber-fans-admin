@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Palette, FolderOpen, Monitor, Radio, Info, Save, RotateCcw, LockKeyhole, ShieldCheck } from "lucide-react";
+import { Palette, FolderOpen, Monitor, Info, Save, RotateCcw, ShieldCheck } from "lucide-react";
 import { Card, Badge, Button, Field, SectionHint } from "@/components/ui";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
+import SyncPanel from "@/components/SyncPanel";
 import { callSafe, isNative, formatDateTime } from "@/lib/ipc";
 import { useApp } from "@/lib/appContext";
 import { writeOnboarding } from "@/lib/onboarding";
@@ -68,24 +69,12 @@ export default function Settings() {
         </Card>
       </div>
 
-      <Card title="同步配置（后续版本开放）" extra={<Badge tone="warning"><LockKeyhole size={12} /> 全部禁用</Badge>}>
-        <SectionHint tone="warning">
-          本期不实现任何自动抓取：没有 HTTP 快照、WebSocket 事件订阅、WBI 签名与扫码登录。以下控件保留配置位但统一禁用，避免造成已可用的错觉。手动导入始终是正式功能。
-        </SectionHint>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4 opacity-55">
-          <Field label="B 站登录 Cookie" disabled placeholder="待同步引擎启用后扫码登录" />
-          <Field label="每日快照时刻" disabled value="04:00" />
-          <Field label="WebSocket 实时订阅" disabled value="关闭" />
-        </div>
-        <div className="flex items-center gap-2 mt-3 text-xs text-muted">
-          <Radio size={13} /> 同步状态：{bootstrap?.settings.cookieConfigured ? "已配置凭证" : "未配置凭证"} · 本期不会发起任何外部请求
-        </div>
-      </Card>
+      <SyncPanel />
 
       <Card title="关于与诊断" extra={<Badge tone="success"><ShieldCheck size={12} /> 数据不出本机</Badge>}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="flex flex-col gap-2 text-sm">
-            <Diag label="版本" value="v0.1.0 · 核心 MVP" />
+            <Diag label="版本" value="v0.2.0 · 台账与可选同步" />
             <Diag label="运行模式" value={isNative() ? "Tauri v2 原生端" : "浏览器演示模式（前端独立验证）"} />
             <Diag label="上次备份" value={formatDateTime(bootstrap?.backupHealth.lastBackupAt ?? null)} />
             <Diag label="粉丝档案" value={`${bootstrap?.fanCount ?? 0} 位`} />

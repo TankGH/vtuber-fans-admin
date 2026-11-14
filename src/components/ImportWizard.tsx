@@ -120,12 +120,12 @@ export function ImportWizard({ onFinished }: { onFinished: (result: ImportResult
   return (
     <Card
       title="名单导入向导"
-      extra={<Badge tone="warning"><FileSpreadsheet size={12} /> 本期仅手动导入</Badge>}
+      extra={<Badge tone="primary"><FileSpreadsheet size={12} /> 手动导入始终可用</Badge>}
     >
       <div className="flex flex-col gap-5">
         <Stepper steps={STEPS} current={step} />
-        <SectionHint tone="warning">
-          本期不自动抓取 B 站数据。导入通道始终可用：支持 CSV / TSV（浏览器可直接体验），桌面端另支持 .xlsx。昵称含空格、「丶」与生僻字均原样保留，数字形态昵称不会自动当作 UID。
+        <SectionHint tone="neutral">
+          导入通道始终可用：支持 CSV / TSV（浏览器可直接体验），桌面端另支持 .xlsx。启用自动抓取并扫码登录后拉取的名单也会复用同一套合并状态机。昵称含空格、「丶」与生僻字均原样保留，数字形态昵称不会自动当作 UID。
         </SectionHint>
 
         <input ref={inputRef} type="file" accept=".csv,.tsv,.txt" className="hidden" onChange={(e) => onBrowserFile(e.target.files?.[0])} />

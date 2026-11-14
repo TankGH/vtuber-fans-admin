@@ -1,6 +1,6 @@
 {
   "name": "vtuber-fans-admin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "守村人·粉丝档案 · Windows 本地桌面工具（Tauri v2 + React + Rust）",

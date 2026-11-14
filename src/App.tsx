@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   LayoutDashboard, UsersRound, Ship, DatabaseBackup, Settings2, Gift, CalendarHeart,
   Wallet, Search, Bell, Minus, ShieldCheck, Sparkles, ChevronRight, FolderOpen,
@@ -15,21 +15,25 @@ import Fans from "@/pages/Fans";
 import Guards from "@/pages/Guards";
 import Backup from "@/pages/Backup";
 import Settings from "@/pages/Settings";
-import Placeholder from "@/pages/Placeholder";
+import Reminders from "@/pages/Reminders";
+import Gifts from "@/pages/Gifts";
 import type { BootstrapDto, ThemeKey } from "@/types/dto";
+
+// 记账页依赖 recharts，按需加载以免图表库进入首屏包
+const Ledger = lazy(() => import("@/pages/Ledger"));
 
 const MAIN_NAV = [
   { key: "dashboard", label: "概览", icon: LayoutDashboard, desc: "数据总览与健康状态" },
   { key: "fans", label: "粉丝档案", icon: UsersRound, desc: "终身档案与敏感信息" },
   { key: "guards", label: "大航海与导入", icon: Ship, desc: "在舰名单与手动导入" },
   { key: "backup", label: "备份恢复", icon: DatabaseBackup, desc: "滚动备份与一键恢复" },
-  { key: "settings", label: "系统设置", icon: Settings2, desc: "主题、目录与托盘行为" },
+  { key: "settings", label: "系统设置", icon: Settings2, desc: "主题、目录、托盘与可选同步" },
 ];
 
-const SOON_NAV = [
-  { key: "reminder", label: "纪念日提醒", icon: CalendarHeart },
-  { key: "gifts", label: "舰礼寄送台账", icon: Gift },
-  { key: "ledger", label: "主播记账本", icon: Wallet },
+const BIZ_NAV = [
+  { key: "reminder", label: "纪念日提醒", icon: CalendarHeart, desc: "生日与周年汇总提醒" },
+  { key: "gifts", label: "舰礼寄送台账", icon: Gift, desc: "批次、地址审核与发货" },
+  { key: "ledger", label: "主播记账本", icon: Wallet, desc: "收支归集与趋势" },
 ];
 
 export default function App() {
@@ -80,7 +84,7 @@ export default function App() {
     await refresh();
   };
 
-  const activeLabel = [...MAIN_NAV, ...SOON_NAV].find((n) => n.key === page)?.label ?? "概览";
+  const activeLabel = [...MAIN_NAV, ...BIZ_NAV].find((n) => n.key === page)?.label ?? "概览";
 
   const renderPage = () => {
     switch (page) {
@@ -88,9 +92,9 @@ export default function App() {
       case "guards": return <Guards />;
       case "backup": return <Backup />;
       case "settings": return <Settings />;
-      case "reminder": return <Placeholder kind="reminder" />;
-      case "gifts": return <Placeholder kind="gifts" />;
-      case "ledger": return <Placeholder kind="ledger" />;
+      case "reminder": return <Reminders />;
+      case "gifts": return <Gifts />;
+      case "ledger": return <Ledger />;
       default: return <Dashboard globalSearch={search} />;
     }
   };
@@ -123,6 +127,11 @@ export default function App() {
             <Badge tone={bootstrap?.backupHealth.healthy ? "success" : "warning"}>
               <Bell size={12} /> {bootstrap?.backupHealth.healthy ? "备份正常" : "建议备份"}
             </Badge>
+            {(bootstrap?.reminderCount ?? 0) > 0 && (
+              <button onClick={() => setPage("reminder")} aria-label="查看纪念日提醒" title="查看待处理纪念日" className="cursor-pointer">
+                <Badge tone="warning"><CalendarHeart size={12} /> 纪念日 {bootstrap?.reminderCount}</Badge>
+              </button>
+            )}
             <ThemeSwitch value={theme} onChange={setTheme} compact />
             <Button className="px-2.5 py-2" title="最小化到托盘" aria-label="最小化到托盘" onClick={() => notify({ tone: "info", title: isNative() ? "已最小化到托盘" : "浏览器预览模式", detail: isNative() ? "后台继续守护本地数据" : "桌面端安装后可最小化到系统托盘" })}>
               <Minus size={15} />
@@ -150,25 +159,26 @@ export default function App() {
             </button>
           ))}
           <div className="my-3 h-px bg-[var(--border)] nav-divider" />
-          <p className="label-sm px-3 pb-1 nav-group-title">即将开放</p>
-          {SOON_NAV.map((item) => (
+          <p className="label-sm px-3 pb-1 nav-group-title">业务台账</p>
+          {BIZ_NAV.map((item) => (
             <button
               key={item.key}
               onClick={() => setPage(item.key)}
+              title={item.desc}
               aria-label={item.label}
               className={twMerge(
-                "nav-item flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all duration-200 cursor-pointer",
-                page === item.key ? "bg-[var(--surface-2)] text-ink" : "text-muted hover:text-ink hover:bg-[var(--surface-2)]",
+                "nav-item flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all duration-200 cursor-pointer group",
+                page === item.key ? "bg-[var(--primary)] text-white shadow-glow" : "text-muted hover:text-ink hover:bg-[var(--surface-2)]",
               )}
             >
-              <item.icon size={16} className="shrink-0" />
-              <span className="flex-1 text-sm nav-label">{item.label}</span>
-              <span className="text-[10px] chip px-2 py-0.5 nav-chip">后续</span>
+              <item.icon size={17} className="shrink-0" />
+              <span className="flex-1 text-sm font-medium nav-label">{item.label}</span>
+              <ChevronRight size={13} className={twMerge("nav-chevron opacity-0 group-hover:opacity-70 transition-opacity", page === item.key && "opacity-70")} />
             </button>
           ))}
           <div className="mt-auto glass-soft rounded-xl p-3 text-xs leading-relaxed text-muted nav-boundary">
-            <p className="text-ink font-medium mb-1">本期能力边界</p>
-            同步功能仅提供手动导入，不含自动抓取。手动录入始终是不变底座。
+            <p className="text-ink font-medium mb-1">数据主权</p>
+            自动抓取默认关闭，由你在设置中决定是否启用；启用后按需扫码登录。手动导入与录入始终是不变底座。
           </div>
         </aside>
 
@@ -183,7 +193,9 @@ export default function App() {
               <p className="text-xs text-muted">{new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" })}</p>
             </div>
             {banner && <StatusBanner tone={banner.tone} title={banner.title} detail={banner.detail} onClose={() => setBanner(null)} />}
-            {renderPage()}
+            <Suspense fallback={<p className="text-sm text-muted py-8 text-center">正在加载页面…</p>}>
+              {renderPage()}
+            </Suspense>
           </div>
         </main>
 
@@ -205,7 +217,7 @@ export default function App() {
         footer={<Button variant="primary" disabled={onboardingBusy} onClick={submitOnboarding}>{onboardingBusy ? "初始化中…" : "完成引导"}</Button>}
       >
         <div className="flex flex-col gap-4">
-          <p className="text-sm leading-relaxed text-muted">只需一步即可开始。所有数据保存在这台电脑上，不会上传云端。本期不自动抓取 B 站数据，名单通过 CSV / Excel 手动导入。</p>
+          <p className="text-sm leading-relaxed text-muted">只需一步即可开始。所有数据保存在这台电脑上，不会上传云端。名单默认通过 CSV / Excel 手动导入；自动抓取默认关闭，需要时可在设置中自行启用并扫码登录。</p>
           <div className="glass-soft rounded-xl p-4 flex flex-col gap-3">
             <p className="text-sm font-medium">第 1 步 · 选择备份目录</p>
             <Field
@@ -216,9 +228,9 @@ export default function App() {
               hint="留空则使用默认目录；每次启动自动备份，保留最近 7 份"
             />
           </div>
-          <div className="glass-soft rounded-xl p-4 flex flex-col gap-3 opacity-70">
+          <div className="glass-soft rounded-xl p-4 flex flex-col gap-3">
             <p className="text-sm font-medium">第 2 步 · 完成</p>
-            <p className="text-xs text-muted">扫码登录与 B 站同步将在后续版本开放，本期该入口保持禁用状态，避免造成已可用的错觉。</p>
+            <p className="text-xs text-muted">自动抓取保持关闭，不会发起任何外部请求。之后若需要，可到「系统设置」主动开启开关、填写房间号并按需扫码登录 B 站；登录凭证只加密保存在本机。</p>
           </div>
         </div>
       </Modal>

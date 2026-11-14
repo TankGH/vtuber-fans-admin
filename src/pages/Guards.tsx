@@ -9,7 +9,7 @@ import { useApp } from "@/lib/appContext";
 import type { GuardEventDto, GuardMemberDto, ImportResult, SnapshotDto } from "@/types/dto";
 
 export default function Guards() {
-  const { refresh, notify } = useApp();
+  const { refresh, notify, goTo, bootstrap } = useApp();
   const [members, setMembers] = useState<GuardMemberDto[]>([]);
   const [snapshots, setSnapshots] = useState<SnapshotDto[]>([]);
   const [events, setEvents] = useState<GuardEventDto[]>([]);
@@ -58,9 +58,11 @@ export default function Guards() {
   return (
     <div className="flex flex-col gap-5">
       <StatusBanner
-        tone="warning"
-        title="本期仅支持手动导入，不自动抓取 B 站数据"
-        detail="快照以「每日名单」为粒度由 CSV / Excel 导入，快照 diff 识别新增上舰、疑似到期与等级变更；有效期以购买事件时间 + 购买月数核算，成员消失仅标记疑似到期，不自动删除档案。"
+        tone="info"
+        title="手动导入始终是正式功能，自动抓取由你在设置中决定是否启用"
+        detail="快照以「每日名单」为粒度；手动导入或在启用同步并扫码登录后拉取网页端名单，都会复用同一套档案合并状态机。有效期以购买事件时间 + 购买月数核算，成员消失仅标记疑似到期，不自动删除档案。"
+        actionText="前往同步设置"
+        onAction={() => goTo("settings")}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -74,7 +76,12 @@ export default function Guards() {
         </div>
         <div className="glass rounded-2xl p-4 flex items-center gap-3">
           <Radio size={22} className="text-muted" />
-          <div><p className="label-sm">实时事件订阅</p><p className="text-sm font-medium mt-2 text-muted">待同步引擎启用</p></div>
+          <div>
+            <p className="label-sm">每日自动快照</p>
+            <p className="text-sm font-medium mt-2 text-muted">
+              {bootstrap?.syncStatus.enabled ? `已启用 · ${String(bootstrap?.syncStatus.snapshotHour ?? 4).padStart(2, "0")}:00` : "未启用（默认关闭）"}
+            </p>
+          </div>
         </div>
       </div>
 

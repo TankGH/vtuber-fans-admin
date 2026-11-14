@@ -224,6 +224,10 @@ pub struct SettingsDto {
     pub cookie_configured: bool,
     pub data_dir: String,
     pub onboarding_done: bool,
+    /// 用户主动开启后才会发生任何外部请求；默认 false
+    pub sync_enabled: bool,
+    pub room_id: String,
+    pub reminder_days_ahead: i32,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -235,6 +239,9 @@ pub struct SettingsInput {
     pub launch_at_startup: Option<bool>,
     pub birthday_year_hidden: Option<bool>,
     pub onboarding_done: Option<bool>,
+    pub room_id: Option<String>,
+    pub snapshot_hour: Option<i32>,
+    pub reminder_days_ahead: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -262,6 +269,9 @@ pub struct BootstrapDto {
     pub guard_count: usize,
     pub snapshot_count: usize,
     pub conflict_count: usize,
+    /// 待处理的纪念日提醒数量，用于顶栏角标
+    pub reminder_count: usize,
+    pub sync_status: SyncStatusDto,
     pub settings: SettingsDto,
     pub backup_health: BackupHealth,
     pub activities: Vec<ActivityDto>,
@@ -318,4 +328,222 @@ pub struct ParsedRow {
 pub struct BackupManifest {
     pub entries: Vec<BackupDto>,
     pub updated_at: String,
+}
+
+// ---- F3 纪念日提醒 ----
+
+pub const REMINDER_TYPES: &[&str] = &["birthday", "guard_anniversary", "watch_anniversary"];
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReminderDto {
+    pub uid: String,
+    pub nickname: String,
+    pub reminder_type: String,
+    pub reminder_label: String,
+    /// 本次触发的具体日期（YYYY-MM-DD），与 reminder_ack 主键一致
+    pub reminder_date: String,
+    /// 距离今天还有几天，0 表示就是今天
+    pub days_ahead: i32,
+    pub acked: bool,
+    pub acked_at: Option<String>,
+    /// 预设祝福话术，只含昵称与纪念日类型，不含生日年份或地址
+    pub greeting: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReminderQuery {
+    pub days_ahead: Option<i32>,
+    pub include_acked: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReminderAckInput {
+    pub uid: String,
+    pub reminder_type: String,
+    pub reminder_date: String,
+    pub acked: Option<bool>,
+}
+
+// ---- F4 舰礼寄送台账 ----
+
+pub const SHIPMENT_STATUSES: &[&str] = &["pending", "address_missing", "shipped", "invalid_address"];
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GiftBatchDto {
+    pub id: i64,
+    pub name: String,
+    pub created_at: String,
+    pub status: String,
+    pub member_count: usize,
+    pub shipped_count: usize,
+    pub pending_count: usize,
+    pub address_ready_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GiftShipmentDto {
+    pub id: i64,
+    pub batch_id: i64,
+    pub uid: String,
+    pub nickname: String,
+    pub guard_level: Option<i32>,
+    pub address_status: String,
+    pub address_masked: Option<String>,
+    pub shipment_status: String,
+    pub tracking_no: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GiftBatchInput {
+    pub name: String,
+    pub member_uids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GiftShipmentInput {
+    pub id: i64,
+    pub shipment_status: Option<String>,
+    pub tracking_no: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GiftAddressStatusInput {
+    pub uid: String,
+    pub address_status: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GiftIdArgs {
+    pub id: i64,
+    pub confirm: Option<bool>,
+}
+
+// ---- F5 主播记账本 ----
+
+pub const LEDGER_TYPES: &[&str] = &["income", "expense"];
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerEntryDto {
+    pub id: i64,
+    pub entry_type: String,
+    pub category: String,
+    pub amount_yuan: f64,
+    pub occurred_at: String,
+    pub batch_id: Option<i64>,
+    pub guard_event_id: Option<i64>,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LedgerInput {
+    pub entry_type: String,
+    pub category: String,
+    pub amount_yuan: f64,
+    pub occurred_at: String,
+    pub batch_id: Option<i64>,
+    pub guard_event_id: Option<i64>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LedgerQuery {
+    pub entry_type: Option<String>,
+    pub month: Option<String>,
+    pub batch_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LedgerIdArgs {
+    pub id: i64,
+    pub confirm: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerBucketDto {
+    pub month: String,
+    pub income_yuan: f64,
+    pub expense_yuan: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerSummaryDto {
+    pub total_income_yuan: f64,
+    pub total_expense_yuan: f64,
+    pub net_yuan: f64,
+    pub entry_count: usize,
+    pub buckets: Vec<LedgerBucketDto>,
+    pub unlinked_event_count: usize,
+}
+
+// ---- 用户可选启用的 B 站同步 ----
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatusDto {
+    pub enabled: bool,
+    /// disabled | not_logged_in | logged_in | expired
+    pub login_state: String,
+    pub cookie_configured: bool,
+    pub mid: String,
+    pub uname: String,
+    pub room_id: String,
+    pub snapshot_hour: i32,
+    pub last_sync_at: Option<String>,
+    pub last_error: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncQrDto {
+    /// 本地生成的 SVG 字符串，前端以 data:image/svg+xml 内联展示
+    pub qr_svg: String,
+    pub qr_url: String,
+    pub qrcode_key: String,
+    pub expires_in: i64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncQrPollDto {
+    /// waiting | scanned | expired | success | error
+    pub status: String,
+    pub message: String,
+    pub uname: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSnapshotResultDto {
+    pub snapshot_id: i64,
+    pub snapshot_date: String,
+    pub member_count: usize,
+    pub new_count: usize,
+    pub merge_count: usize,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SyncEnableArgs {
+    pub enabled: bool,
+    /// 开启同步必须携带二次确认，避免误触后产生外部请求
+    pub confirm: Option<bool>,
 }

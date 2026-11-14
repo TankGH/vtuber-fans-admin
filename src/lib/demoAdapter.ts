@@ -5,18 +5,33 @@ import type {
   ExportResult,
   FanProfileDto,
   FanProfileInput,
+  GiftBatchDto,
+  GiftBatchInput,
+  GiftShipmentDto,
+  GiftShipmentInput,
   GuardEventDto,
   GuardMemberDto,
   ImportCommitArgs,
   ImportParseArgs,
   ImportPreview,
   ImportResult,
+  LedgerEntryDto,
+  LedgerInput,
+  LedgerQuery,
+  LedgerSummaryDto,
   Paged,
   ProfileQuery,
+  ReminderAckInput,
+  ReminderDto,
+  ReminderQuery,
   RestorePlan,
   SettingsDto,
   SettingsInput,
   SnapshotDto,
+  SyncQrDto,
+  SyncQrPollDto,
+  SyncSnapshotResultDto,
+  SyncStatusDto,
   ThemeKey,
 } from "@/types/dto";
 import {
@@ -24,9 +39,14 @@ import {
   seedActivities,
   seedBackups,
   seedEvents,
+  seedGiftBatches,
+  seedGiftShipments,
   seedGuardMembers,
+  seedLedgerEntries,
   seedProfiles,
+  seedReminders,
   seedSnapshots,
+  seedSyncStatus,
 } from "@/lib/demoData";
 import { buildPreview, buildRows, earliestInteraction } from "@/lib/importLogic";
 
@@ -46,6 +66,15 @@ interface DemoState {
   addresses: Record<string, AddressDto>;
   importContent: string;
   nextImportBatchId: number;
+  reminders: ReminderDto[];
+  giftBatches: GiftBatchDto[];
+  giftShipments: GiftShipmentDto[];
+  ledgerEntries: LedgerEntryDto[];
+  sync: SyncStatusDto;
+  qr: { active: boolean; polls: number } | null;
+  nextGiftBatchId: number;
+  nextShipmentId: number;
+  nextLedgerId: number;
 }
 
 function initialState(): DemoState {
@@ -64,7 +93,30 @@ function initialState(): DemoState {
     addresses,
     importContent: "",
     nextImportBatchId: 7,
+    reminders: seedReminders(),
+    giftBatches: seedGiftBatches(),
+    giftShipments: seedGiftShipments(),
+    ledgerEntries: seedLedgerEntries(),
+    sync: seedSyncStatus(),
+    qr: null,
+    nextGiftBatchId: 3,
+    nextShipmentId: 7,
+    nextLedgerId: 5,
   };
+}
+
+function syncSettings(state: DemoState): void {
+  state.sync.roomId = state.settings.roomId;
+  state.sync.snapshotHour = state.settings.snapshotHour;
+  state.sync.enabled = state.settings.syncEnabled;
+  if (!state.sync.enabled) state.sync.loginState = "disabled";
+  else if (!state.sync.cookieConfigured) state.sync.loginState = "not_logged_in";
+  else if (state.sync.loginState === "disabled" || state.sync.loginState === "not_logged_in") state.sync.loginState = "logged_in";
+  state.sync.message = !state.sync.enabled
+    ? "自动抓取已关闭，不会发起任何外部请求；名单可通过 CSV / Excel 手动导入。"
+    : state.sync.loginState === "not_logged_in"
+      ? "已启用自动抓取，尚未登录。点击「扫码登录 B 站」按需完成登录。"
+      : "登录有效，可立即同步或等待每日定时快照。";
 }
 
 function load(): DemoState {
@@ -156,6 +208,8 @@ function bootstrap(): BootstrapDto {
     guardCount: state.guardMembers.filter((g) => g.status === "active").length,
     snapshotCount: state.snapshots.length,
     conflictCount: 0,
+    reminderCount: state.reminders.filter((r) => !r.acked && r.daysAhead <= state.settings.reminderDaysAhead).length,
+    syncStatus: state.sync,
     settings: state.settings,
     backupHealth: {
       lastBackupAt: last,
@@ -183,6 +237,60 @@ function profileList(args: Record<string, unknown>): Paged<FanProfileDto> {
   const page = q.page ?? 1;
   const pageSize = q.pageSize ?? 10;
   return { items: filtered.slice((page - 1) * pageSize, page * pageSize), total: filtered.length, page, pageSize };
+}
+
+function maskPhone(raw: string): string {
+  if (raw.length < 7) return "****";
+  return `${raw.slice(0, 3)}****${raw.slice(-4)}`;
+}
+
+/** 演示模式不访问任何外部服务，用确定性网格模拟二维码外观 */
+function demoQrSvg(seed: string): string {
+  const cells: string[] = [];
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) { hash = (hash ^ seed.charCodeAt(i)) * 16777619 >>> 0; }
+  for (let y = 0; y < 21; y += 1) {
+    for (let x = 0; x < 21; x += 1) {
+      hash = (hash * 1103515245 + 12345) >>> 0;
+      if ((hash >>> 16) % 100 < 48) cells.push(`<rect x="${x}" y="${y}" width="1" height="1"/>`);
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 25 25" width="232" height="232" shape-rendering="crispEdges"><rect x="-2" y="-2" width="25" height="25" fill="#fff"/><g fill="#0B1220">${cells.join("")}</g></svg>`;
+}
+
+function refreshBatchCounts(state: DemoState, batchId: number): GiftBatchDto {
+  const items = state.giftShipments.filter((s) => s.batchId === batchId);
+  const batch = state.giftBatches.find((b) => b.id === batchId)!;
+  batch.memberCount = items.length;
+  batch.shippedCount = items.filter((s) => s.shipmentStatus === "shipped").length;
+  batch.pendingCount = batch.memberCount - batch.shippedCount;
+  batch.addressReadyCount = items.filter((s) => s.addressStatus === "valid" || s.addressStatus === "shipped").length;
+  return batch;
+}
+
+function ledgerSummary(state: DemoState): LedgerSummaryDto {
+  const buckets = new Map<string, { incomeYuan: number; expenseYuan: number }>();
+  let income = 0;
+  let expense = 0;
+  state.ledgerEntries.forEach((e) => {
+    const key = e.occurredAt.slice(0, 7);
+    const slot = buckets.get(key) ?? { incomeYuan: 0, expenseYuan: 0 };
+    if (e.entryType === "income") { income += e.amountYuan; slot.incomeYuan += e.amountYuan; }
+    else { expense += e.amountYuan; slot.expenseYuan += e.amountYuan; }
+    buckets.set(key, slot);
+  });
+  const round = (v: number) => Math.round(v * 100) / 100;
+  return {
+    totalIncomeYuan: round(income),
+    totalExpenseYuan: round(expense),
+    netYuan: round(income - expense),
+    entryCount: state.ledgerEntries.length,
+    buckets: [...buckets.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([month, v]) => ({
+      month, incomeYuan: round(v.incomeYuan), expenseYuan: round(v.expenseYuan),
+    })),
+    unlinkedEventCount: state.events.filter((e) => (e.eventType === "purchase" || e.eventType === "renew")
+      && (e.priceYuan ?? 0) > 0 && !state.ledgerEntries.some((l) => l.guardEventId === e.id)).length,
+  };
 }
 
 const handlers: Record<string, Handler> = {
@@ -330,10 +438,238 @@ const handlers: Record<string, Handler> = {
     const input = a.input as SettingsInput;
     state.settings = { ...state.settings, ...input };
     if (input.theme) logActivity(state, "theme", `主题切换为 ${({ galaxy: "守村人深蓝", mist: "晨雾浅色", aurora: "暖霞" } as Record<ThemeKey, string>)[input.theme]}`);
+    syncSettings(state);
     save(state);
     return state.settings;
   },
   open_data_dir: () => null,
+
+  // ---- F3 纪念日提醒 ----
+  reminder_list: (a) => {
+    const q = a as unknown as ReminderQuery;
+    const days = q.daysAhead ?? 3;
+    const include = q.includeAcked ?? true;
+    return load().reminders.filter((r) => r.daysAhead <= days && (include || !r.acked));
+  },
+  reminder_ack: (a) => {
+    const input = a as unknown as ReminderAckInput;
+    const state = load();
+    const item = state.reminders.find((r) => r.uid === input.uid && r.reminderType === input.reminderType && r.reminderDate === input.reminderDate);
+    if (!item) throw { code: "E_NOT_FOUND", message: "未找到该纪念日提醒" };
+    item.acked = input.acked ?? true;
+    item.ackedAt = item.acked ? now() : null;
+    logActivity(state, "reminder", `${item.acked ? "标记" : "撤销"} ${item.nickname} 的${item.reminderLabel}`);
+    save(state);
+    return item;
+  },
+  reminder_notify: () => false,
+
+  // ---- F4 舰礼寄送台账 ----
+  gift_batch_list: () => load().giftBatches,
+  gift_batch_create: (a) => {
+    const input = a as unknown as GiftBatchInput;
+    const state = load();
+    if (!input.name?.trim()) throw { code: "E_INVALID_INPUT", message: "请填写批次名称" };
+    const uids = [...new Set((input.memberUids ?? []).map((u) => String(u).trim()).filter(Boolean))];
+    if (!uids.length) throw { code: "E_INVALID_INPUT", message: "请至少选择一位在舰成员" };
+    const id = state.nextGiftBatchId++;
+    state.giftBatches.unshift({ id, name: input.name.trim(), createdAt: now(), status: "open", memberCount: 0, shippedCount: 0, pendingCount: 0, addressReadyCount: 0 });
+    uids.forEach((uid) => {
+      const p = state.profiles.find((x) => x.uid === uid);
+      const addressStatus = p?.addressStatus ?? "none";
+      const ready = addressStatus === "valid" || addressStatus === "shipped";
+      state.giftShipments.push({
+        id: state.nextShipmentId++, batchId: id, uid,
+        nickname: p?.currentNickname ?? uid, guardLevel: p?.guardLevel ?? null,
+        addressStatus, addressMasked: p?.addressMasked ?? null,
+        shipmentStatus: ready ? "pending" : "address_missing", trackingNo: null, updatedAt: now(),
+      });
+    });
+    logActivity(state, "gift", `创建舰礼批次「${input.name.trim()}」，共 ${uids.length} 人`);
+    const batch = refreshBatchCounts(state, id);
+    save(state);
+    return batch;
+  },
+  gift_shipment_list: (a) => load().giftShipments.filter((s) => s.batchId === Number(a.batchId)),
+  gift_shipment_update: (a) => {
+    const input = a as unknown as GiftShipmentInput;
+    const state = load();
+    const item = state.giftShipments.find((s) => s.id === input.id);
+    if (!item) throw { code: "E_NOT_FOUND", message: "未找到该寄送记录" };
+    if (input.shipmentStatus && !["pending", "address_missing", "shipped", "invalid_address"].includes(input.shipmentStatus)) {
+      throw { code: "E_INVALID_INPUT", message: "寄送状态无效" };
+    }
+    if (input.shipmentStatus) item.shipmentStatus = input.shipmentStatus;
+    if (input.trackingNo !== undefined) item.trackingNo = input.trackingNo || null;
+    item.updatedAt = now();
+    refreshBatchCounts(state, item.batchId);
+    logActivity(state, "gift", `更新 ${item.nickname} 的寄送状态`);
+    save(state);
+    return item;
+  },
+  gift_address_set_status: (a) => {
+    const state = load();
+    const uid = String(a.uid);
+    const status = String(a.addressStatus);
+    if (!["none", "pending", "valid", "invalid", "shipped"].includes(status)) throw { code: "E_INVALID_INPUT", message: "地址审核状态无效" };
+    const p = state.profiles.find((x) => x.uid === uid);
+    if (!p) throw { code: "E_NOT_FOUND", message: "未找到该粉丝档案" };
+    p.addressStatus = status as FanProfileDto["addressStatus"];
+    state.giftShipments.filter((s) => s.uid === uid).forEach((s) => { s.addressStatus = p.addressStatus; });
+    state.giftShipments.forEach((s) => refreshBatchCounts(state, s.batchId));
+    save(state);
+    return null;
+  },
+  gift_shipment_reveal_address: (a) => {
+    if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "查看完整地址需要二次确认" };
+    const state = load();
+    const item = state.giftShipments.find((s) => s.id === Number(a.id));
+    if (!item) throw { code: "E_NOT_FOUND", message: "未找到该寄送记录" };
+    const addr = state.addresses[item.uid];
+    if (!addr) return null;
+    return { ...addr, phone: maskPhone(addr.phone) };
+  },
+  gift_batch_export: (a) => {
+    if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "导出寄送清单需要二次确认" };
+    return { path: `gift-batch-${a.batchId}-masked.csv`, sizeBytes: 2048, masked: true } as ExportResult;
+  },
+
+  // ---- F5 主播记账本 ----
+  ledger_list: (a) => {
+    const q = a as unknown as LedgerQuery;
+    return load().ledgerEntries.filter((e) =>
+      (!q.entryType || e.entryType === q.entryType)
+      && (!q.month || e.occurredAt.startsWith(q.month))
+      && (!q.batchId || e.batchId === q.batchId));
+  },
+  ledger_create: (a) => {
+    const input = a as unknown as LedgerInput;
+    if (!input.category?.trim()) throw { code: "E_INVALID_INPUT", message: "请填写分类" };
+    if (!(Number(input.amountYuan) > 0)) throw { code: "E_INVALID_INPUT", message: "金额需为大于 0 的数字" };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.occurredAt ?? "")) throw { code: "E_INVALID_INPUT", message: "日期格式应为 YYYY-MM-DD" };
+    const state = load();
+    const existing = state.ledgerEntries.some((e) => input.guardEventId != null && e.guardEventId === input.guardEventId);
+    if (existing) throw { code: "E_INVALID_INPUT", message: "该航海事件已归集，避免重复计入" };
+    const entry: LedgerEntryDto = {
+      id: state.nextLedgerId++, entryType: input.entryType, category: input.category.trim(),
+      amountYuan: Number(input.amountYuan), occurredAt: input.occurredAt,
+      batchId: input.batchId ?? null, guardEventId: input.guardEventId ?? null, note: input.note ?? "",
+    };
+    state.ledgerEntries.unshift(entry);
+    logActivity(state, "ledger", `新增${entry.entryType === "income" ? "收入" : "支出"}「${entry.category}」`);
+    save(state);
+    return entry;
+  },
+  ledger_delete: (a) => {
+    if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "删除账目需要二次确认" };
+    const state = load();
+    const idx = state.ledgerEntries.findIndex((e) => e.id === Number(a.id));
+    if (idx < 0) throw { code: "E_NOT_FOUND", message: "未找到该账目" };
+    state.ledgerEntries.splice(idx, 1);
+    logActivity(state, "ledger", "删除一条账目");
+    save(state);
+    return null;
+  },
+  ledger_summary: () => ledgerSummary(load()),
+  ledger_sync_events: () => {
+    const state = load();
+    let count = 0;
+    state.events.filter((e) => (e.eventType === "purchase" || e.eventType === "renew") && (e.priceYuan ?? 0) > 0
+      && !state.ledgerEntries.some((l) => l.guardEventId === e.id)).forEach((e) => {
+      state.ledgerEntries.unshift({
+        id: state.nextLedgerId++, entryType: "income", category: "大航海",
+        amountYuan: e.priceYuan ?? 0, occurredAt: e.eventAt.slice(0, 10),
+        batchId: null, guardEventId: e.id, note: `${e.nickname} 的${e.eventType === "renew" ? "续费" : "购买"}事件`,
+      });
+      count += 1;
+    });
+    if (count) logActivity(state, "ledger", `自动归集 ${count} 条大航海收入`);
+    save(state);
+    return ledgerSummary(state);
+  },
+
+  // ---- 用户可选启用的 B 站同步（演示模式不发起任何真实请求） ----
+  sync_status: () => load().sync,
+  sync_set_enabled: (a) => {
+    const state = load();
+    const enabled = Boolean(a.enabled);
+    if (enabled && !a.confirm) throw { code: "E_INVALID_INPUT", message: "启用自动抓取需要确认" };
+    state.settings.syncEnabled = enabled;
+    state.qr = null;
+    if (!enabled) state.sync.lastError = null;
+    syncSettings(state);
+    logActivity(state, "sync", enabled ? "用户主动启用自动抓取" : "用户关闭自动抓取");
+    save(state);
+    return state.sync;
+  },
+  sync_qr_start: () => {
+    const state = load();
+    if (!state.settings.syncEnabled) throw { code: "E_INVALID_INPUT", message: "自动抓取未启用，请先在设置中主动开启" };
+    state.qr = { active: true, polls: 0 };
+    state.sync.lastError = null;
+    save(state);
+    return {
+      qrSvg: demoQrSvg("demo-qr-" + Date.now()),
+      qrUrl: "https://passport.bilibili.com/qr/demo",
+      qrcodeKey: "demo-key", expiresIn: 180,
+      message: "演示模式二维码，不会访问 B 站；桌面端将展示真实扫码二维码。",
+    } as SyncQrDto;
+  },
+  sync_qr_poll: () => {
+    const state = load();
+    if (!state.qr?.active) throw { code: "E_INVALID_INPUT", message: "二维码会话已结束，请重新生成" };
+    state.qr.polls += 1;
+    const polls = state.qr.polls;
+    let result: SyncQrPollDto;
+    if (polls < 2) result = { status: "waiting", message: "等待扫码，请用 B 站 App 扫描二维码", uname: null };
+    else if (polls < 4) result = { status: "scanned", message: "已扫码，请在手机上点击确认登录", uname: null };
+    else {
+      state.qr.active = false;
+      state.sync.cookieConfigured = true;
+      state.sync.uname = "演示账号";
+      state.sync.mid = "100000";
+      state.sync.loginState = "logged_in";
+      state.settings.cookieConfigured = true;
+      logActivity(state, "sync", "扫码登录成功，凭证已加密保存到本机");
+      result = { status: "success", message: "扫码登录成功，凭证已加密保存在本机", uname: "演示账号" };
+    }
+    syncSettings(state);
+    save(state);
+    return result;
+  },
+  sync_logout: () => {
+    const state = load();
+    state.sync.cookieConfigured = false;
+    state.settings.cookieConfigured = false;
+    state.sync.uname = "";
+    state.sync.mid = "";
+    state.sync.loginState = "not_logged_in";
+    state.qr = null;
+    syncSettings(state);
+    logActivity(state, "sync", "退出 B 站登录并清除本机凭证");
+    save(state);
+    return state.sync;
+  },
+  sync_snapshot_now: () => {
+    const state = load();
+    if (!state.settings.syncEnabled) throw { code: "E_INVALID_INPUT", message: "自动抓取未启用" };
+    if (!state.settings.roomId) throw { code: "E_INVALID_INPUT", message: "请先填写直播间房间号" };
+    if (!state.sync.cookieConfigured) throw { code: "E_SYNC_COOKIE", message: "尚未扫码登录，请先登录 B 站" };
+    const today = new Date().toISOString().slice(0, 10);
+    const existing = state.snapshots.find((s) => s.snapshotDate === today);
+    if (!existing) state.snapshots.unshift({
+      id: Math.max(0, ...state.snapshots.map((s) => s.id)) + 1, snapshotDate: today,
+      roomId: state.settings.roomId, fetchedAt: now(), memberCount: state.guardMembers.length, source: "snapshot",
+    });
+    state.sync.lastSyncAt = now();
+    state.sync.lastError = null;
+    logActivity(state, "sync", `写入 ${today} 大航海快照：${state.guardMembers.length} 人`);
+    save(state);
+    return {
+      snapshotId: state.snapshots[0].id, snapshotDate: today, memberCount: state.guardMembers.length,
+      newCount: 0, mergeCount: state.guardMembers.length, source: "snapshot",
+    } as SyncSnapshotResultDto;
+  },
 };
 
 export function demoInvoke<T>(command: string, args: Record<string, unknown>): T {

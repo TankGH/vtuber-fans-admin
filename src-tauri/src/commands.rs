@@ -6,7 +6,7 @@ use tauri::State;
 use crate::db::{self, AppState};
 use crate::error::{AppError, AppResult};
 use crate::models::*;
-use crate::{backup, guard, import, profile, settings};
+use crate::{backup, gifts, guard, import, ledger, profile, reminder, settings, sync};
 
 /// 所有命令统一接收一个 payload 对象，避免跨语言参数命名歧义；参数校验集中在此
 fn args<T: DeserializeOwned>(payload: &Value) -> AppResult<T> {
@@ -41,6 +41,14 @@ struct BackupIdArgs { backup_id: String, confirm: Option<bool> }
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct ExportArgs { dest_path: Option<String>, confirm: Option<bool> }
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct IdArgs { id: i64, confirm: Option<bool> }
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct BatchIdArgs { batch_id: i64, dest_path: Option<String>, confirm: Option<bool> }
 
 #[tauri::command]
 pub fn app_bootstrap(state: State<'_, AppState>, payload: Value) -> AppResult<BootstrapDto> {
@@ -186,4 +194,179 @@ pub fn open_data_dir(state: State<'_, AppState>, payload: Value) -> AppResult<()
     std::process::Command::new("explorer").arg(&dir).spawn()
         .map_err(|e| AppError::new("E_INTERNAL", format!("打开数据目录失败：{e}")))?;
     Ok(())
+}
+
+// ---- F3 纪念日提醒 ----
+
+#[tauri::command]
+pub fn reminder_list(state: State<'_, AppState>, payload: Value) -> AppResult<Vec<ReminderDto>> {
+    let q: ReminderQuery = args(&payload)?;
+    let db = state.lock_db()?;
+    reminder::list(&db, &q)
+}
+
+#[tauri::command]
+pub fn reminder_ack(state: State<'_, AppState>, payload: Value) -> AppResult<ReminderDto> {
+    let input: ReminderAckInput = args(&payload)?;
+    let db = state.lock_db()?;
+    reminder::ack(&db, &input)
+}
+
+/// 每日最多一次 Windows 原生 Toast；是否发送由 app_meta 中的日期标记决定
+#[tauri::command]
+pub fn reminder_notify(app: tauri::AppHandle, state: State<'_, AppState>, payload: Value) -> AppResult<bool> {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = payload;
+    let db = state.lock_db()?;
+    let cfg = settings::load(&state.data_dir);
+    let count = reminder::pending_count(&db, cfg.reminder_days_ahead)?;
+    if count == 0 || !reminder::should_toast(&db)? { return Ok(false); }
+    app.notification().builder()
+        .title("守村人·粉丝档案 · 纪念日提醒")
+        .body(format!("未来 {} 天内有 {} 条待处理纪念日，请进入「纪念日提醒」查看。", cfg.reminder_days_ahead, count))
+        .show()
+        .map_err(|e| AppError::new("E_INTERNAL", format!("原生通知发送失败：{e}")))?;
+    reminder::mark_toasted(&db)?;
+    Ok(true)
+}
+
+// ---- F4 舰礼寄送台账 ----
+
+#[tauri::command]
+pub fn gift_batch_list(state: State<'_, AppState>, payload: Value) -> AppResult<Vec<GiftBatchDto>> {
+    let _ = payload;
+    let db = state.lock_db()?;
+    gifts::batch_list(&db)
+}
+
+#[tauri::command]
+pub fn gift_batch_create(state: State<'_, AppState>, payload: Value) -> AppResult<GiftBatchDto> {
+    let input: GiftBatchInput = args(&payload)?;
+    let db = state.lock_db()?;
+    gifts::batch_create(&db, &input)
+}
+
+#[tauri::command]
+pub fn gift_shipment_list(state: State<'_, AppState>, payload: Value) -> AppResult<Vec<GiftShipmentDto>> {
+    let a: BatchIdArgs = args(&payload)?;
+    let db = state.lock_db()?;
+    gifts::shipment_list(&db, a.batch_id)
+}
+
+#[tauri::command]
+pub fn gift_shipment_update(state: State<'_, AppState>, payload: Value) -> AppResult<GiftShipmentDto> {
+    let input: GiftShipmentInput = args(&payload)?;
+    let db = state.lock_db()?;
+    gifts::shipment_update(&db, &input)
+}
+
+#[tauri::command]
+pub fn gift_address_set_status(state: State<'_, AppState>, payload: Value) -> AppResult<()> {
+    let input: GiftAddressStatusInput = args(&payload)?;
+    let db = state.lock_db()?;
+    gifts::address_set_status(&db, &input)
+}
+
+/// 完整地址必须携带 confirm=true，由前端二次确认对话框负责
+#[tauri::command]
+pub fn gift_shipment_reveal_address(state: State<'_, AppState>, payload: Value) -> AppResult<AddressDto> {
+    let a: IdArgs = args(&payload)?;
+    let db = state.lock_db()?;
+    gifts::reveal_address(&db, a.id, a.confirm == Some(true))
+}
+
+#[tauri::command]
+pub fn gift_batch_export(state: State<'_, AppState>, payload: Value) -> AppResult<ExportResult> {
+    let a: BatchIdArgs = args(&payload)?;
+    let db = state.lock_db()?;
+    gifts::export_masked(&db, &state.data_dir, a.batch_id, a.dest_path.as_deref(), a.confirm == Some(true))
+}
+
+// ---- F5 主播记账本 ----
+
+#[tauri::command]
+pub fn ledger_list(state: State<'_, AppState>, payload: Value) -> AppResult<Vec<LedgerEntryDto>> {
+    let q: LedgerQuery = args(&payload)?;
+    let db = state.lock_db()?;
+    ledger::list(&db, &q)
+}
+
+#[tauri::command]
+pub fn ledger_create(state: State<'_, AppState>, payload: Value) -> AppResult<LedgerEntryDto> {
+    let input: LedgerInput = args(&payload)?;
+    let db = state.lock_db()?;
+    ledger::create(&db, &input)
+}
+
+#[tauri::command]
+pub fn ledger_delete(state: State<'_, AppState>, payload: Value) -> AppResult<()> {
+    let a: LedgerIdArgs = args(&payload)?;
+    let db = state.lock_db()?;
+    ledger::delete(&db, a.id, a.confirm == Some(true))
+}
+
+#[tauri::command]
+pub fn ledger_summary(state: State<'_, AppState>, payload: Value) -> AppResult<LedgerSummaryDto> {
+    let _ = payload;
+    let db = state.lock_db()?;
+    ledger::summary(&db)
+}
+
+#[tauri::command]
+pub fn ledger_sync_events(state: State<'_, AppState>, payload: Value) -> AppResult<LedgerSummaryDto> {
+    let _ = payload;
+    let db = state.lock_db()?;
+    ledger::sync_events(&db)?;
+    ledger::summary(&db)
+}
+
+// ---- 用户可选启用的 B 站同步 ----
+
+/// 所有涉及网络的命令都在阻塞线程池执行，避免同步 HTTP 卡住主窗口；
+/// 关闭同步时，除 sync_status 外不会发起任何外部请求。
+async fn run_blocking<F, T>(app: tauri::AppHandle, task: F) -> AppResult<T>
+where
+    F: FnOnce(&tauri::AppHandle) -> AppResult<T> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || task(&app))
+        .await
+        .map_err(|e| AppError::new("E_INTERNAL", format!("同步任务异常：{e}")))?
+}
+
+#[tauri::command]
+pub async fn sync_status(app: tauri::AppHandle, payload: Value) -> AppResult<SyncStatusDto> {
+    let _ = payload;
+    run_blocking(app, sync::status).await
+}
+
+#[tauri::command]
+pub async fn sync_set_enabled(app: tauri::AppHandle, payload: Value) -> AppResult<SyncStatusDto> {
+    let a: SyncEnableArgs = args(&payload)?;
+    let (enabled, confirm) = (a.enabled, a.confirm == Some(true));
+    run_blocking(app, move |h| sync::set_enabled(h, enabled, confirm)).await
+}
+
+#[tauri::command]
+pub async fn sync_qr_start(app: tauri::AppHandle, payload: Value) -> AppResult<SyncQrDto> {
+    let _ = payload;
+    run_blocking(app, sync::qr_start).await
+}
+
+#[tauri::command]
+pub async fn sync_qr_poll(app: tauri::AppHandle, payload: Value) -> AppResult<SyncQrPollDto> {
+    let _ = payload;
+    run_blocking(app, sync::qr_poll).await
+}
+
+#[tauri::command]
+pub async fn sync_logout(app: tauri::AppHandle, payload: Value) -> AppResult<SyncStatusDto> {
+    let _ = payload;
+    run_blocking(app, sync::logout).await
+}
+
+#[tauri::command]
+pub async fn sync_snapshot_now(app: tauri::AppHandle, payload: Value) -> AppResult<SyncSnapshotResultDto> {
+    let _ = payload;
+    run_blocking(app, sync::snapshot_now).await
 }

@@ -9,6 +9,8 @@ use crate::import::{build_rows, default_mapping, parse_delimited, parse_level, s
 use crate::models::{AddressValue, BirthdayValue, ParsedRow};
 use crate::profile;
 
+mod features;
+
 fn crypto() -> Crypto {
     Crypto::from_key_for_test([7u8; 32])
 }

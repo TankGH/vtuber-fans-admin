@@ -186,6 +186,9 @@ export interface SettingsDto {
   cookieConfigured: boolean;
   dataDir: string;
   onboardingDone: boolean;
+  syncEnabled: boolean;
+  roomId: string;
+  reminderDaysAhead: number;
 }
 
 export interface SettingsInput {
@@ -195,6 +198,9 @@ export interface SettingsInput {
   launchAtStartup?: boolean;
   birthdayYearHidden?: boolean;
   onboardingDone?: boolean;
+  roomId?: string;
+  snapshotHour?: number;
+  reminderDaysAhead?: number;
 }
 
 export interface ActivityDto {
@@ -216,6 +222,8 @@ export interface BootstrapDto {
   guardCount: number;
   snapshotCount: number;
   conflictCount: number;
+  reminderCount: number;
+  syncStatus: SyncStatusDto;
   settings: SettingsDto;
   backupHealth: BackupHealth;
   activities: ActivityDto[];
@@ -253,4 +261,162 @@ export interface ImportParseArgs {
 
 export interface ImportCommitArgs extends ImportParseArgs {
   previewToken?: string;
+}
+
+// ---- F3 纪念日提醒 ----
+
+export type ReminderType = "birthday" | "guard_anniversary" | "watch_anniversary";
+
+export interface ReminderDto {
+  uid: string;
+  nickname: string;
+  reminderType: ReminderType;
+  reminderLabel: string;
+  reminderDate: string;
+  daysAhead: number;
+  acked: boolean;
+  ackedAt: string | null;
+  greeting: string;
+}
+
+export interface ReminderQuery {
+  daysAhead?: number;
+  includeAcked?: boolean;
+}
+
+export interface ReminderAckInput {
+  uid: string;
+  reminderType: ReminderType;
+  reminderDate: string;
+  acked?: boolean;
+}
+
+// ---- F4 舰礼寄送台账 ----
+
+export type ShipmentStatus = "pending" | "address_missing" | "shipped" | "invalid_address";
+
+export interface GiftBatchDto {
+  id: number;
+  name: string;
+  createdAt: string;
+  status: string;
+  memberCount: number;
+  shippedCount: number;
+  pendingCount: number;
+  addressReadyCount: number;
+}
+
+export interface GiftShipmentDto {
+  id: number;
+  batchId: number;
+  uid: string;
+  nickname: string;
+  guardLevel: GuardLevel | null;
+  addressStatus: AddressStatus;
+  addressMasked: string | null;
+  shipmentStatus: ShipmentStatus;
+  trackingNo: string | null;
+  updatedAt: string;
+}
+
+export interface GiftBatchInput {
+  name: string;
+  memberUids: string[];
+}
+
+export interface GiftShipmentInput {
+  id: number;
+  shipmentStatus?: ShipmentStatus;
+  trackingNo?: string;
+}
+
+// ---- F5 主播记账本 ----
+
+export type LedgerType = "income" | "expense";
+
+export interface LedgerEntryDto {
+  id: number;
+  entryType: LedgerType;
+  category: string;
+  amountYuan: number;
+  occurredAt: string;
+  batchId: number | null;
+  guardEventId: number | null;
+  note: string;
+}
+
+export interface LedgerInput {
+  entryType: LedgerType;
+  category: string;
+  amountYuan: number;
+  occurredAt: string;
+  batchId?: number | null;
+  guardEventId?: number | null;
+  note?: string;
+}
+
+export interface LedgerQuery {
+  entryType?: LedgerType | "";
+  month?: string;
+  batchId?: number;
+}
+
+export interface LedgerBucketDto {
+  month: string;
+  incomeYuan: number;
+  expenseYuan: number;
+}
+
+export interface LedgerSummaryDto {
+  totalIncomeYuan: number;
+  totalExpenseYuan: number;
+  netYuan: number;
+  entryCount: number;
+  buckets: LedgerBucketDto[];
+  unlinkedEventCount: number;
+}
+
+// ---- 用户可选启用的 B 站同步 ----
+
+export type LoginState = "disabled" | "not_logged_in" | "logged_in" | "expired";
+
+export interface SyncStatusDto {
+  enabled: boolean;
+  loginState: LoginState;
+  cookieConfigured: boolean;
+  mid: string;
+  uname: string;
+  roomId: string;
+  snapshotHour: number;
+  lastSyncAt: string | null;
+  lastError: string | null;
+  message: string;
+}
+
+export interface SyncQrDto {
+  qrSvg: string;
+  qrUrl: string;
+  qrcodeKey: string;
+  expiresIn: number;
+  message: string;
+}
+
+export interface SyncQrPollDto {
+  status: "waiting" | "scanned" | "expired" | "success" | "error";
+  message: string;
+  uname: string | null;
+}
+
+export interface SyncSnapshotResultDto {
+  snapshotId: number;
+  snapshotDate: string;
+  memberCount: number;
+  newCount: number;
+  mergeCount: number;
+  source: string;
+}
+
+export interface SyncEnableArgs {
+  enabled: boolean;
+  confirm?: boolean;
 }

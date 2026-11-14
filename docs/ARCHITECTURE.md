@@ -13,7 +13,7 @@
 | 同步「尽力而为」 | 同步源是可替换的 trait，失败可降级；手动导入是永不关闭的底座 |
 | 普通用户「双击即用」 | 单 `.msi` / `.exe`，零 Python / Node 运行时；异常以中文文案直接展示 |
 
-> **本期边界（用户已确认）**：核心 MVP = F1 粉丝档案 + F2 导入与数据结构 + F6 备份恢复 + F7 设置；F3/F4/F5 只有占位页与表结构。**本期不写任何抓取代码**（无 HTTP 快照、无 WebSocket、无 WBI 签名、无扫码登录、无 Cookie 提取），仅保留 `SyncSource` 扩展点。
+> **当前边界（v0.2.0）**：F1–F7 均为可用功能。同步引擎为**用户可选启用**的网页端低频快照：默认关闭，启用后按需扫码登录，凭证以 DPAPI 主密钥加密保存；已实现 HTTP 快照、WBI 签名、扫码登录与凭证管理，**未实现 WebSocket 实时事件订阅**。`SyncSource` trait 保留为后续扩展点。手动导入始终可用，同步失败时降级到手动通道。
 
 ## 2. 技术选型
 
@@ -37,15 +37,18 @@ flowchart TB
     P2[粉丝档案 F1]
     P3[大航海与导入 F2]
     P4[备份恢复 F6]
-    P5[系统设置 F7]
-    PX[F3/F4/F5 占位页]
+    P5[系统设置 F7 / 可选同步]
+    P6[纪念日 F3]
+    P7[舰礼台账 F4]
+    P8[记账本 F5]
     SH[主题 / 顶栏 / 状态栏 / 引导]
   end
   subgraph IPC["IPC 契约层 · Tauri Commands"]
     C1[profile_* / import_*]
     C2[guard_* / snapshot_*]
     C3[backup_* / restore_*]
-    C4[settings_* / theme_*]
+    C4[settings_* / sync_*]
+    C5[reminder_* / gift_* / ledger_*]
     ERR[统一错误码与中文文案]
   end
   subgraph CORE["Rust Core · 领域服务"]
@@ -54,19 +57,21 @@ flowchart TB
     S3[快照与有效期模型]
     S4[备份引擎]
     S5[设置与主题]
+    S6[提醒 / 舰礼 / 记账服务]
     CR[加密 / 脱敏 / DPAPI 主密钥]
-    SYNC[SyncSource trait 占位 · 无网络实现]
+    SYNC[SyncSource + BiliSource 网页端快照]
   end
   subgraph DATA["本地存储"]
     DB[(SQLite + 全量 schema)]
-    FILES[(备份目录 7 份滚动 / 配置 / 密钥)]
+    FILES[(备份目录 7 份滚动 / 配置 / 密钥 / bili_session.enc)]
   end
   UI --> IPC --> CORE
   CORE --> CR
   CORE --> DB
   S4 --> FILES
   S5 --> FILES
-  SYNC -. 后续 ROADMAP 接入 .-> S3
+  SYNC --> S3
+  SYNC -. 仅启用后访问 B 站 .-> WEB([B 站网页接口])
 ```
 
 **四层切分**：`UI 层 → IPC 契约层 → 领域服务层 → 存储层`。所有跨语言交互收敛到 `src-tauri/src/commands.rs` 与 `src/lib/ipc.ts` 两处，避免 `invoke` 散落页面。Commands 只做参数校验与 DTO 转换，业务在领域服务内以事务完成。
@@ -75,13 +80,13 @@ flowchart TB
 
 ## 4. 安全与加密模型
 
-### 4.1 需求文档目标 vs 本期实现（可审计偏差）
+### 4.1 需求文档目标 vs 当前实现（可审计偏差）
 
 需求文档 3.3 指定 **SQLite + SQLCipher（AES-256）全库加密**。`rusqlite` 的 `bundled-sqlcipher-vendored-openssl` 在 Windows/MSVC 下需要 Perl、NASM 与 OpenSSL 源码编译链，在本机「无管理员权限 + 纯净 MSVC」环境下构建风险高。
 
-> **本期采用降级方案，且不静默降低安全性**：
+> **当前采用降级方案，且不静默降低安全性**：
 > 1. 数据库 = `rusqlite` bundled SQLite（常规单文件）；
-> 2. **字段级 AES-256-GCM**：`address_encrypted` BLOB（收件人/电话/地址 JSON）、生日年份、Cookie 等敏感值密文落盘，每条记录独立随机 nonce；
+> 2. **字段级 AES-256-GCM**：`address_encrypted` BLOB（收件人/电话/地址 JSON）、生日年份、B 站登录凭证（`bili_session.enc`）等敏感值密文落盘，每条记录独立随机 nonce；
 > 3. 主密钥由 **Windows DPAPI**（`CryptProtectData`，CurrentUser 作用域）保护后存于本地 `app.key`，不以明文出现在磁盘或日志；
 > 4. **备份文件整体加密**：`VACUUM INTO` 一致性快照后再做一次 AES-256-GCM 封装，`manifest.json` 记录校验摘要；
 > 5. UI 默认脱敏：地址仅「省+市+区」、生日仅「月日」，年份可隐藏；导出完整地址需二次确认。
@@ -95,7 +100,8 @@ flowchart TB
 - `tracing` 日志**禁止**写入 Cookie、收件人、电话、完整地址、生日与主密钥；只记录操作类型、行数、错误码。
 - 导出完整地址必须先展示脱敏预览并二次确认；默认导出项是脱敏 CSV。
 - 恢复前自动为当前库再备份一次，保证任何恢复都可回退。
-- Tauri Capabilities 采用最小权限：仅 dialog / notification / fs（限定应用数据目录与备份目录）。
+- Tauri Capabilities 采用最小权限：仅 dialog / notification / fs（限定应用数据目录与备份目录）。网页端快照的网络请求由 Rust Core 的 `reqwest::blocking` 在后台线程发起，Web 视图不获得任意域的网络权限；二维码由 `qrcode` crate 在本机生成 SVG，不经第三方服务。
+- **用户决定权**：`settings.json` 中 `syncEnabled` 默认 `false`。关闭时除本地状态读取外不发起任何外部请求；开启需前端二次确认，登录需用户主动点击扫码入口。凭证可随时通过「退出登录」清除。
 
 ## 5. 模块职责
 
@@ -107,18 +113,20 @@ flowchart TB
 | `profile.rs` | F1 CRUD、昵称历史、手动锁定合并状态机 | 同 UID 保留最早首次互动时间 |
 | `import.rs` | F2 CSV/xlsx 解析、字段映射、预览、批量写入 | 预览不写库；确认后单事务 O(n) |
 | `guard.rs` | 快照/成员/事件查询与有效期核算 | 纯数据层，无网络 |
-| `sync/mod.rs` | `SyncSource` trait 契约 | **本期无实现**，避免误以为已可用 |
+| `sync/mod.rs` | `SyncSource` trait、凭证加密存取、扫码会话、快照合并、每日调度 | 只在 `syncEnabled=true` 时访问网络；同日重复同步覆盖同一快照 |
+| `sync/bilibili.rs` | 扫码登录、WBI 签名、大航海名单解析 | 纯同步函数，只在 `spawn_blocking` / 后台线程调用，不阻塞 UI |
+| `reminder.rs` / `gifts.rs` / `ledger.rs` | F3 / F4 / F5 领域服务 | 生日脱敏、完整地址二次确认、事件归集幂等 |
 | `backup.rs` | 启动备份、7 份滚动、manifest、恢复标记、导出 | 恢复走重启替换，避免文件占用 |
-| `settings.rs` | 主题、备份目录、托盘行为、同步配置占位 | 同步相关配置 UI 置禁用态 |
+| `settings.rs` | 主题、备份目录、托盘行为、同步开关与提醒配置 | 开启同步只由 `sync_set_enabled` 写入且需二次确认 |
 | `commands.rs` | 全部 IPC 命令注册 | 唯一跨语言边界 |
 
 ## 6. 后台任务与 Windows 集成
 
-- **启动序列**：读设置 → 检查 `restore.json` 恢复标记 → 打开数据库（执行迁移）→ 后台异步执行启动备份与滚动清理 → 构建窗口、托盘、状态栏 → 前端初始化主题与首启引导。
-- **每日调度**：本期只实现「启动时检查」，每日定时快照属于同步引擎（ROADMAP），不提前引入定时器造成假象。
+- **启动序列**：读设置 → 检查 `restore.json` 恢复标记 → 打开数据库（执行迁移）→ 注册 `SyncState` → 后台异步执行启动备份与滚动清理、启动定时同步线程 → 构建窗口、托盘、状态栏 → 前端初始化主题与首启引导。
+- **每日调度**：后台线程每 5 分钟检查一次本地配置；仅在用户启用同步、当前小时等于设定快照时刻、当天尚未尝试且当天尚无同步快照时执行一次。失败记录到界面状态，不重试轰炸。
 - **托盘**：关闭主窗口按设置「最小化到托盘」或「退出应用」；托盘菜单含显示主窗口、立即备份、退出。
-- **通知**：`tauri-plugin-notification` 发 Windows 原生 Toast，用于同步失败（后续）与备份/恢复结果。
-- **首启引导**：本期精简为「选择备份目录 → 完成」两步；扫码登录入口保留但明确标注「后续版本开放」。
+- **通知**：`tauri-plugin-notification` 发 Windows 原生 Toast，用于每日首次启动的纪念日汇总（`reminder_notify`，由 `app_meta` 日期标记去重）。
+- **首启引导**：保持「选择备份目录 → 完成」两步，不强制登录；说明自动抓取默认关闭，需要时到设置中主动开启并扫码。
 - **诊断**：界面直接显示「文件格式错误 / 备份目录不可写 / 数据库被占用」等原因与「重试」按钮，不要求用户查看日志。
 
 ## 7. 性能与复杂度
@@ -131,11 +139,16 @@ flowchart TB
 
 ## 8. 打包与构建链路
 
-- `tauri.conf.json`：窗口 1440×900（最小 1024×680）、托盘图标、`bundle.targets` 为 `["nsis"]`（WiX 3 代码页 1252 不支持中文产品名，故本期不打 MSI）、前端 `devUrl` / `frontendDist` 指向 Vite。
+- `tauri.conf.json`：窗口 1440×900（最小 1024×680）、托盘图标、`bundle.targets` 为 `["nsis"]`（WiX 3 代码页 1252 不支持中文产品名，故不打 MSI）、前端 `devUrl` / `frontendDist` 指向 Vite。
 - 构建：`npm run build` → `npm run tauri build`；Rust 侧 `cargo check` / `cargo test`。
 - **工具链前置**：rustup stable `x86_64-pc-windows-msvc` + VS Build Tools 2022（C++ 生成工具 + Windows SDK）+ 系统自带 WebView2 运行时。
 - **降级路径**：若本机 MSVC/原生依赖安装受阻，保留完整源码与文档，用 `npm run dev`（Vite + dev 演示数据适配器）验证全部 UI，并在 `README.md` 明确区分「前端已验证」与「Tauri 原生端待验证」，**不伪造编译通过**。
 
-## 9. 明确不做（本期）
+## 9. 当前未做
 
-抓取 B 站 HTTP 快照、WebSocket 事件订阅、WBI 签名、扫码登录与 Cookie 管理、F3 提醒引擎、F4 寄送台账业务、F5 记账统计业务。所有相关表结构与 IPC 契约已预留，接入步骤见 [`ROADMAP.md`](./ROADMAP.md)。
+- 直播间 **WebSocket 实时事件订阅**（L2）：当前只做网页端低频名单快照，购买 / 续费事件仍来自手动导入。
+- 快照 diff 推断续费事件、按事件自动核算有效期的完整闭环。
+- 跨 Windows 用户的主密钥迁移工具、SQLCipher 全库加密。
+- 真实 B 站账号的扫码登录与名单拉取人工端到端验证（需要账号与网络环境）。
+
+演进步骤见 [`ROADMAP.md`](./ROADMAP.md)。

@@ -88,7 +88,11 @@ pub fn activities(conn: &Connection, limit: usize) -> AppResult<Vec<ActivityDto>
 pub fn bootstrap(state: &AppState) -> AppResult<BootstrapDto> {
     let data_dir = state.data_dir.clone();
     let cfg = settings::load(&data_dir);
+    // status_from_state 内部需要短暂持有数据库锁，必须在下方取得锁之前完成
+    let sync_status = crate::sync::status_from_state(state)?;
+    let reminder_days = cfg.reminder_days_ahead;
     let db = state.lock_db()?;
+    let reminder_count = crate::reminder::pending_count(&db, reminder_days)?;
     let fan_count = count(&db.conn, "fan_profile")?;
     let snapshot_count = count(&db.conn, "guard_snapshot")?;
     let guard_count: usize = db
@@ -112,6 +116,8 @@ pub fn bootstrap(state: &AppState) -> AppResult<BootstrapDto> {
         guard_count,
         snapshot_count,
         conflict_count: 0,
+        reminder_count,
+        sync_status,
         settings: cfg.to_dto(&data_dir),
         backup_health: BackupHealth {
             last_backup_at,
