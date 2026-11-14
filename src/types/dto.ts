@@ -30,6 +30,10 @@ export interface FanProfileDto {
   manualLockedFields: FieldName[];
   guardLevel: GuardLevel | null;
   rank: number | null;
+  /** 最后一次出现在大航海名单中的等级（过期成员用于显示灰化徽章） */
+  lastGuardLevel: GuardLevel | null;
+  /** 曾在大航海名单中但当前已不在，或存在疑似到期事件 */
+  guardExpired: boolean;
   source: SourceKind;
   createdAt: string;
   updatedAt: string;

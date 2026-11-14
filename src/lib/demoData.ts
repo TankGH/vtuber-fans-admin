@@ -50,6 +50,8 @@ export function seedProfiles(): FanProfileDto[] {
   return ROSTER.map(([uid, nickname, guardLevel, rank], i) => {
     const birth = BIRTHDAYS[uid];
     const addr = ADDRESSES[uid];
+    // 「大幕丶渐起」在演示名册里是疑似到期成员，用于展示过期舰长的灰化徽章
+    const expired = uid === "1000013";
     return {
       uid,
       currentNickname: nickname,
@@ -67,8 +69,10 @@ export function seedProfiles(): FanProfileDto[] {
       watchAnniversaryDate: i % 3 === 0 ? `2024-${String((i % 12) + 1).padStart(2, "0")}-20` : null,
       note: uid === "1000009" ? "昵称含空格，导入时须原样保留" : "",
       manualLockedFields: uid === "1000001" ? (["nickname", "birthday"] as FanProfileDto["manualLockedFields"]) : [],
-      guardLevel,
-      rank,
+      guardLevel: expired ? null : guardLevel,
+      rank: expired ? null : rank,
+      lastGuardLevel: guardLevel,
+      guardExpired: expired,
       source: "import",
       createdAt: "2025-01-08T10:20:00+08:00",
       updatedAt: "2026-11-12T09:30:00+08:00",

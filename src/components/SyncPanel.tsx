@@ -125,8 +125,16 @@ export default function SyncPanel() {
 
   return (
     <>
-      <Card title="自动抓取（由你决定是否启用）" extra={<Badge tone={enabled ? "primary" : "neutral"}><Radio size={12} /> {enabled ? "已启用" : "默认关闭"}</Badge>}>
+      <Card title="自动抓取（由你决定是否启用）" extra={<span className="flex items-center gap-1.5"><Badge tone="danger">尚未验证 · 暂不建议使用</Badge><Badge tone={enabled ? "primary" : "neutral"}><Radio size={12} /> {enabled ? "已启用" : "默认关闭"}</Badge></span>}>
         <div className="flex flex-col gap-4">
+          <div className="flex items-start gap-2 rounded-xl border border-[var(--danger)] glass-soft px-3 py-2.5 text-xs leading-relaxed text-danger">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+            <div>
+              <strong className="font-semibold">当前不建议使用扫码自动获取：此功能尚未验证。</strong>
+              <p className="mt-1">真实 B 站账号的扫码登录与名单拉取还没做人工端到端验证，接口可能变更、返回空名单，或把当日大航海快照写空。请优先使用 CSV / Excel 手动导入；如仍需试用，请先做一次备份，并自行核对同步后的名单。</p>
+            </div>
+          </div>
+
           <Switch
             checked={enabled}
             disabled={working}
@@ -137,7 +145,7 @@ export default function SyncPanel() {
 
           <SectionHint tone={enabled ? "neutral" : "warning"}>
             {status?.message ?? "自动抓取默认关闭，名单可通过 CSV / Excel 手动导入。"}
-            {" "}这是基于主播自身账号可见数据的低频同步，不保证实时；粉丝数据始终只保存在这台电脑。
+            {" "}这是基于主播自身账号可见数据的低频同步，不保证实时；粉丝数据始终只保存在这台电脑。<strong className="font-medium"> 该功能尚未验证，当前不建议使用，正式名单请走手动导入。</strong>
           </SectionHint>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -178,6 +186,8 @@ export default function SyncPanel() {
             <li>同步前校验登录态是否仍然有效。</li>
           </ul>
           <p>登录凭证经本机密钥加密后保存在数据目录，不写入日志、不进备份清单、不上传任何粉丝数据。随时可以关闭开关并退出登录，手动导入始终可用。</p>
+          <p className="text-danger font-medium">注意：扫码登录与大航海名单拉取尚未完成真实账号验证，当前不建议用于正式档案；请继续使用手动导入，并先做一次备份再试用。</p>
+          <p className="text-muted">建议使用主播本人（或对该直播间有管理权限）的 B 站账号扫码，登录后请核对显示的账号名与房间号是否一致。</p>
         </div>
       </Modal>
 
@@ -200,6 +210,7 @@ export default function SyncPanel() {
             <span>{qrState ? `${POLL_TEXT[qrState.status] ?? qrState.status} · ${qrState.message}` : qr?.message}</span>
           </div>
           <p className="text-xs text-muted text-center">二维码在本机生成，不包含第三方服务；有效期约 3 分钟，过期后点击「重新生成二维码」。</p>
+          <p className="text-xs text-danger text-center leading-relaxed">提醒：扫码登录与名单拉取尚未完成真实账号验证，当前不建议使用；请使用主播本人账号扫码，并在同步后核对名单。</p>
         </div>
       </Modal>
     </>

@@ -4,7 +4,9 @@ import { Card, Badge, Button, Field, SelectField, SectionHint } from "@/componen
 import { DataTable, type Column } from "@/components/DataTable";
 import { FanDetail } from "@/components/FanDetail";
 import { FanFormModal } from "@/components/FanFormModal";
+import { GuardBadge } from "@/components/GuardBadge";
 import { callSafe, ADDRESS_STATUS_TEXT, GUARD_LEVEL_TEXT } from "@/lib/ipc";
+import { zodiacFromBirthday } from "@/lib/zodiac";
 import { useApp } from "@/lib/appContext";
 import type { AddressStatus, FanProfileDto, FanProfileInput, GuardLevel, Paged, ProfileQuery } from "@/types/dto";
 
@@ -45,8 +47,26 @@ export default function Fans() {
       <div className="flex items-center gap-2"><span className="font-medium">{p.currentNickname}</span>
         {p.manualLockedFields.length > 0 && <LockKeyhole size={12} className="text-warning" />}</div>
     ) },
-    { key: "level", title: "等级", width: "90px", render: (p) => p.guardLevel ? <Badge tone={p.guardLevel === 1 ? "warning" : p.guardLevel === 2 ? "primary" : "neutral"}>{GUARD_LEVEL_TEXT[p.guardLevel]}</Badge> : <span className="text-muted">—</span> },
-    { key: "birthday", title: "生日（脱敏）", width: "120px", render: (p) => <span className="masked-value">{p.birthdayMasked ?? "—"}</span> },
+    { key: "level", title: "大航海", width: "130px", render: (p) => {
+      const level = p.guardLevel ?? p.lastGuardLevel;
+      if (!level) return <span className="text-muted">—</span>;
+      return (
+        <span className="flex items-center gap-1.5" title={p.guardExpired ? "已退出最新大航海名单" : undefined}>
+          <GuardBadge level={level} expired={p.guardExpired} size={22} />
+          <span className="text-xs whitespace-nowrap">
+            {p.guardExpired
+              ? <span className="text-danger font-medium">已过期</span>
+              : GUARD_LEVEL_TEXT[level]}
+          </span>
+        </span>
+      );
+    } },
+    { key: "birthday", title: "生日 / 星座", width: "130px", render: (p) => (
+      <div className="flex flex-col leading-tight">
+        <span className="masked-value">{p.birthdayMasked ?? "—"}</span>
+        <span className="text-xs text-muted mt-0.5">{zodiacFromBirthday(p.birthdayMasked) ?? "星座未登记"}</span>
+      </div>
+    ) },
     { key: "address", title: "地址（脱敏）", render: (p) => <span className="text-xs masked-value">{p.addressMasked ?? "—"}</span> },
     { key: "status", title: "地址审核", width: "110px", render: (p) => <Badge tone={p.addressStatus === "valid" ? "success" : p.addressStatus === "pending" ? "warning" : "neutral"}>{ADDRESS_STATUS_TEXT[p.addressStatus]}</Badge> },
     { key: "locked", title: "锁定字段", width: "100px", render: (p) => <span className="text-xs text-muted">{p.manualLockedFields.length} 项</span> },

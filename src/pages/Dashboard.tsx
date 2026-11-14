@@ -111,8 +111,9 @@ export default function Dashboard({ globalSearch }: { globalSearch: string }) {
                 <div><p className="text-sm font-medium">{f.title}</p><p className="text-xs text-muted mt-1 leading-relaxed">{f.desc}</p></div>
               </button>
             ))}
-            <SectionHint tone="neutral">
-              自动抓取默认关闭；{bootstrap?.syncStatus.enabled ? "已在设置中启用，可按需扫码登录。" : "需要时可在设置中自行启用并扫码登录。"}手动导入始终可用。
+            <SectionHint tone="warning">
+              自动抓取默认关闭；{bootstrap?.syncStatus.enabled ? "已在设置中启用，可按需扫码登录。" : "需要时可在设置中自行启用并扫码登录。"}
+              <strong className="font-medium"> 扫码自动获取尚未验证，当前不建议使用</strong>；正式名单请使用手动导入。
             </SectionHint>
           </div>
         </Card>

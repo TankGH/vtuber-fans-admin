@@ -20,16 +20,44 @@ pub fn locked_json(fields: &[String]) -> String {
     serde_json::to_string(fields).unwrap_or_else(|_| "[]".to_string())
 }
 
-fn guard_level_map(conn: &Connection) -> AppResult<HashMap<String, (i32, Option<i32>)>> {
-    let mut map = HashMap::new();
+#[derive(Debug, Default, Clone)]
+struct GuardState {
+    level: Option<i32>,
+    rank: Option<i32>,
+    last_level: Option<i32>,
+    expired: bool,
+}
+
+/// 汇总每位粉丝的大航海状态：当前等级、最后一次出现的等级、是否已过期。
+/// 「已过期」= 历史名单里出现过但最新快照里已消失，或存在疑似到期事件。
+fn guard_state_map(conn: &Connection) -> AppResult<HashMap<String, GuardState>> {
+    let mut map: HashMap<String, GuardState> = HashMap::new();
     let mut stmt = conn.prepare(
-        "SELECT m.uid, m.guard_level, m.rank FROM guard_snapshot_member m
-         WHERE m.snapshot_id = (SELECT MAX(id) FROM guard_snapshot)",
+        "SELECT uid, guard_level FROM guard_snapshot_member m
+         WHERE m.snapshot_id = (SELECT MAX(snapshot_id) FROM guard_snapshot_member WHERE uid = m.uid)",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i32>(1)?)))?;
+    for row in rows {
+        let (uid, level) = row?;
+        map.entry(uid).or_default().last_level = Some(level);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT uid, guard_level, rank FROM guard_snapshot_member
+         WHERE snapshot_id = (SELECT MAX(id) FROM guard_snapshot)",
     )?;
     let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i32>(1)?, r.get::<_, Option<i32>>(2)?)))?;
     for row in rows {
         let (uid, level, rank) = row?;
-        map.insert(uid, (level, rank));
+        let state = map.entry(uid).or_default();
+        state.level = Some(level);
+        state.rank = rank;
+        state.last_level = Some(level);
+    }
+    let mut stmt = conn.prepare("SELECT DISTINCT uid FROM guard_event WHERE event_type = 'expire_suspected'")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    for row in rows { map.entry(row?).or_default().expired = true; }
+    for state in map.values_mut() {
+        if state.level.is_none() && state.last_level.is_some() { state.expired = true; }
     }
     Ok(map)
 }
@@ -71,7 +99,7 @@ pub fn list(db: &Db, query: &ProfileQuery, hide_year: bool) -> AppResult<Paged<F
             r.get::<_, String>(9)?, r.get::<_, String>(10)?, r.get::<_, String>(11)?, r.get::<_, String>(12)?,
         ))
     })?;
-    let levels = guard_level_map(&db.conn)?;
+    let states = guard_state_map(&db.conn)?;
     let mut items = Vec::new();
     for row in rows {
         let t = row?;
@@ -81,7 +109,7 @@ pub fn list(db: &Db, query: &ProfileQuery, hide_year: bool) -> AppResult<Paged<F
         let mut hs = db.conn.prepare("SELECT nickname FROM fan_nickname_history WHERE uid = ?1 ORDER BY id ASC")?;
         let names = hs.query_map([&uid], |r| r.get::<_, String>(0))?;
         for n in names { history.push(n?); }
-        let (guard_level, rank) = levels.get(&uid).map(|(l, r)| (Some(*l), *r)).unwrap_or((None, None));
+        let state = states.get(&uid).cloned().unwrap_or_default();
         items.push(FanProfileDto {
             uid,
             current_nickname: t.1,
@@ -94,8 +122,10 @@ pub fn list(db: &Db, query: &ProfileQuery, hide_year: bool) -> AppResult<Paged<F
             watch_anniversary_date: t.5,
             note: t.8,
             manual_locked_fields: locked,
-            guard_level,
-            rank,
+            guard_level: state.level,
+            rank: state.rank,
+            last_guard_level: state.last_level,
+            guard_expired: state.expired,
             source: t.10,
             created_at: t.11,
             updated_at: t.12,
@@ -120,14 +150,15 @@ pub fn get(db: &Db, uid: &str, hide_year: bool) -> AppResult<FanProfileDto> {
     let mut hs = db.conn.prepare("SELECT nickname FROM fan_nickname_history WHERE uid = ?1 ORDER BY id ASC")?;
     let names = hs.query_map([uid], |r| r.get::<_, String>(0))?;
     for n in names { history.push(n?); }
-    let (guard_level, rank) = guard_level_map(&db.conn)?.get(uid)
-        .map(|(l, r)| (Some(*l), *r)).unwrap_or((None, None));
+    let state = guard_state_map(&db.conn)?.get(uid).cloned().unwrap_or_default();
     Ok(FanProfileDto {
         uid: t.0, current_nickname: t.1, nickname_history: history,
         first_interaction_at: t.3, birthday_masked: db.crypto.mask_birthday(&t.2, hide_year),
         address_masked: db.crypto.mask_address(&t.6), address_status: t.7,
         guard_anniversary_date: t.4, watch_anniversary_date: t.5, note: t.8,
-        manual_locked_fields: locked_fields(&t.9), guard_level, rank,
+        manual_locked_fields: locked_fields(&t.9),
+        guard_level: state.level, rank: state.rank,
+        last_guard_level: state.last_level, guard_expired: state.expired,
         source: t.10, created_at: t.11, updated_at: t.12,
     })
 }

@@ -178,7 +178,7 @@ export default function App() {
           ))}
           <div className="mt-auto glass-soft rounded-xl p-3 text-xs leading-relaxed text-muted nav-boundary">
             <p className="text-ink font-medium mb-1">数据主权</p>
-            自动抓取默认关闭，由你在设置中决定是否启用；启用后按需扫码登录。手动导入与录入始终是不变底座。
+            自动抓取默认关闭，由你在设置中决定是否启用；扫码自动获取尚未验证，当前不建议使用。手动导入与录入始终是不变底座。
           </div>
         </aside>
 
@@ -217,7 +217,7 @@ export default function App() {
         footer={<Button variant="primary" disabled={onboardingBusy} onClick={submitOnboarding}>{onboardingBusy ? "初始化中…" : "完成引导"}</Button>}
       >
         <div className="flex flex-col gap-4">
-          <p className="text-sm leading-relaxed text-muted">只需一步即可开始。所有数据保存在这台电脑上，不会上传云端。名单默认通过 CSV / Excel 手动导入；自动抓取默认关闭，需要时可在设置中自行启用并扫码登录。</p>
+          <p className="text-sm leading-relaxed text-muted">只需一步即可开始。所有数据保存在这台电脑上，不会上传云端。名单默认通过 CSV / Excel 手动导入；自动抓取默认关闭，且扫码自动获取尚未验证、当前不建议使用。</p>
           <div className="glass-soft rounded-xl p-4 flex flex-col gap-3">
             <p className="text-sm font-medium">第 1 步 · 选择备份目录</p>
             <Field
@@ -230,7 +230,7 @@ export default function App() {
           </div>
           <div className="glass-soft rounded-xl p-4 flex flex-col gap-3">
             <p className="text-sm font-medium">第 2 步 · 完成</p>
-            <p className="text-xs text-muted">自动抓取保持关闭，不会发起任何外部请求。之后若需要，可到「系统设置」主动开启开关、填写房间号并按需扫码登录 B 站；登录凭证只加密保存在本机。</p>
+            <p className="text-xs text-muted">自动抓取保持关闭，不会发起任何外部请求。扫码自动获取尚未完成真实账号验证，当前不建议使用；正式名单请使用手动导入。如仍要试用，可到「系统设置」主动开启开关并按需扫码登录（建议使用主播本人账号），登录凭证只加密保存在本机。</p>
           </div>
         </div>
       </Modal>

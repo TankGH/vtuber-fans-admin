@@ -84,8 +84,11 @@ pub fn create(db: &Db, input: &LedgerInput) -> AppResult<LedgerEntryDto> {
          VALUES (?1,?2,?3,?4,?5,?6,?7)",
         params![input.entry_type, category, input.amount_yuan, date, input.batch_id, input.guard_event_id, note],
     )?;
+    // last_insert_rowid 是「连接级」的：后续任何 INSERT（例如 log_activity 写 activity_log）
+    // 都会覆盖它。必须在插入后立即捕获，否则回读会查到别的 id 并误报「未找到该账目」。
+    let id = db.conn.last_insert_rowid();
     log_activity(&db.conn, "ledger", &format!("新增{}「{category}」{:.2} 元", if input.entry_type == "income" { "收入" } else { "支出" }, input.amount_yuan))?;
-    by_id(db, db.conn.last_insert_rowid())
+    by_id(db, id)
 }
 
 pub fn delete(db: &Db, id: i64, confirm: bool) -> AppResult<()> {

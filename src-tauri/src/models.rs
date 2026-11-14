@@ -43,8 +43,13 @@ pub struct FanProfileDto {
     pub watch_anniversary_date: Option<String>,
     pub note: String,
     pub manual_locked_fields: Vec<String>,
+    /// 最新快照中的等级；为 None 表示当前不在名单中
     pub guard_level: Option<GuardLevel>,
     pub rank: Option<i32>,
+    /// 最后一次出现在大航海名单中的等级，用于过期成员的灰化徽章
+    pub last_guard_level: Option<GuardLevel>,
+    /// 曾在大航海名单中但当前已不在（或有疑似到期事件）
+    pub guard_expired: bool,
     pub source: String,
     pub created_at: String,
     pub updated_at: String,

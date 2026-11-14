@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BarChart, Bar, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Wallet, TrendingUp, TrendingDown, Scale, Plus, Trash2, RefreshCw } from "lucide-react";
 import { Badge, Button, Card, Field, Modal, SectionHint, SelectField } from "@/components/ui";
@@ -26,6 +26,7 @@ export default function Ledger() {
   const [addOpen, setAddOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<LedgerEntryDto | null>(null);
   const [busy, setBusy] = useState(false);
+  const creatingRef = useRef(false);
   const [form, setForm] = useState<LedgerInput>({
     entryType: "expense", category: "舰礼采购", amountYuan: 0, occurredAt: today(), note: "", batchId: null,
   });
@@ -45,13 +46,20 @@ export default function Ledger() {
   useEffect(() => { load().catch((err: unknown) => console.error("账本加载失败：", err)); }, [load]);
 
   const createEntry = async () => {
+    // 保存按钮在请求完成前可能被连续点击；用 ref 做重入锁，避免产生重复账目
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setBusy(true);
-    const { error } = await callSafe("ledger_create", { ...form } as Record<string, unknown>);
-    setBusy(false);
-    if (error) { notify({ tone: "error", title: "新增账目失败", detail: error.message }); return; }
-    setAddOpen(false);
-    notify({ tone: "success", title: "账目已记录", detail: `${form.category} ¥ ${Number(form.amountYuan).toFixed(2)}` });
-    await load();
+    try {
+      const { error } = await callSafe("ledger_create", { ...form } as Record<string, unknown>);
+      if (error) { notify({ tone: "error", title: "新增账目失败", detail: error.message }); return; }
+      setAddOpen(false);
+      notify({ tone: "success", title: "账目已记录", detail: `${form.category} ¥ ${Number(form.amountYuan).toFixed(2)}` });
+      await load();
+    } finally {
+      creatingRef.current = false;
+      setBusy(false);
+    }
   };
 
   const removeEntry = async () => {

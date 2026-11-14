@@ -19,6 +19,7 @@ function profile(uid: string, locked: FanProfileDto["manualLockedFields"] = []):
     firstInteractionAt: "2024-01-08", birthdayMasked: null, addressMasked: null,
     addressStatus: "none", guardAnniversaryDate: null, watchAnniversaryDate: null,
     note: "", manualLockedFields: locked, guardLevel: 3, rank: 1,
+    lastGuardLevel: 3, guardExpired: false,
     source: "manual", createdAt: "2024-01-08", updatedAt: "2026-01-01",
   };
 }

@@ -2,6 +2,7 @@
 
 > **权威需求来源**：[`../requirement-doc.md`](../requirement-doc.md)。本文为实现层详细设计；架构分层与安全模型见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)，后续能力见 [`ROADMAP.md`](./ROADMAP.md)。
 > **当前范围（v0.2.0）**：F1–F7 均可用；F3 / F4 / F5 为完整业务页面；同步引擎为**用户可选启用**的网页端低频快照（默认关闭，启用后按需扫码登录），不含 WebSocket 实时事件订阅。
+> ⚠ **扫码自动获取尚未完成真实账号验证，当前不建议使用**：设置面板、启用确认框与扫码弹窗均放置醒目提示，正式名单请走手动导入。
 
 ## 1. 需求追溯矩阵
 
@@ -12,6 +13,7 @@
 | F1 | 多来源录入、手动锁定字段 | ✅ 实现（自动同步来源暂缺） | `manual_locked_fields` + 合并状态机 |
 | F1 | 同 UID 合并保留最早首次互动时间 | ✅ 实现 | `profile.rs` / `import.rs` 单事务 |
 | F1 | 地址生日加密 + UI 默认脱敏 | ✅ 实现 | 字段级 AES-256-GCM + 脱敏 DTO |
+| F1 | 星座、大航海等级徽章、过期舰长标注 | ✅ 实现 | `zodiac.ts` 由脱敏生日推算星座；`GuardBadge.tsx` + `src/assets/badges/*.png`（随包打包）；`profile.rs::guard_state_map` 输出 `lastGuardLevel` / `guardExpired` |
 | F2 大航海 | L1 HTTP 快照 / L2 WebSocket | ✅ L1 实现（可选启用）/ L2 未实现 | `sync::bilibili::BiliSource` + `sync::apply_snapshot`；WBI 签名、扫码登录、加密凭证 |
 | F2 | L3 手动补录（CSV / Excel） | ✅ 实现 | `import.rs` + 导入向导 |
 | F2 | 快照 diff / 有效期核算 / 疑似到期 | ✅ 数据层 | `guard.rs` 查询与核算；写入来自导入 |

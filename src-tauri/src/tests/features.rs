@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use chrono::Datelike;
 use reqwest::header::{HeaderMap, HeaderValue};
+use rusqlite::params;
 use serde_json::json;
 
 use super::*;
@@ -10,7 +11,7 @@ use crate::guard;
 use crate::ledger;
 use crate::models::{
     BirthdayValue, FanProfileInput, GiftAddressStatusInput, GiftBatchInput, GiftShipmentInput,
-    LedgerInput, LedgerQuery, ReminderAckInput, ReminderQuery, SettingsInput,
+    LedgerInput, LedgerQuery, ProfileQuery, ReminderAckInput, ReminderQuery, SettingsInput,
 };
 use crate::reminder;
 use crate::settings;
@@ -137,6 +138,71 @@ fn ledger_income_sync_is_idempotent_and_summary_is_rounded() {
     assert!(ledger::delete(&db, id, false).is_err(), "删除需二次确认");
     ledger::delete(&db, id, true).unwrap();
     assert_eq!(ledger::summary(&db).unwrap().total_expense_yuan, 0.0);
+}
+
+#[test]
+fn expired_guards_keep_last_level_and_are_flagged() {
+    let (_tmp, state) = temp_state();
+    let db = state.lock_db().unwrap();
+    for (uid, name) in [("u-active", "在舰"), ("u-expired", "过期")] {
+        profile::create(&db, &FanProfileInput {
+            uid: uid.into(), current_nickname: name.into(), ..Default::default()
+        }).unwrap();
+    }
+    db.conn.execute(
+        "INSERT INTO guard_snapshot(snapshot_date, room_id, fetched_at, source) VALUES ('2026-11-13','','2026-11-13T04:00:00+08:00','import')", [],
+    ).unwrap();
+    let first = db.conn.last_insert_rowid();
+    for (uid, level) in [("u-active", 2), ("u-expired", 3)] {
+        db.conn.execute(
+            "INSERT INTO guard_snapshot_member(snapshot_id, uid, nickname, guard_level, rank) VALUES (?1,?2,?3,?4,1)",
+            params![first, uid, uid, level],
+        ).unwrap();
+    }
+    db.conn.execute(
+        "INSERT INTO guard_snapshot(snapshot_date, room_id, fetched_at, source) VALUES ('2026-11-14','','2026-11-14T04:00:00+08:00','import')", [],
+    ).unwrap();
+    let latest = db.conn.last_insert_rowid();
+    db.conn.execute(
+        "INSERT INTO guard_snapshot_member(snapshot_id, uid, nickname, guard_level, rank) VALUES (?1,'u-active','在舰',1,1)",
+        params![latest],
+    ).unwrap();
+
+    let page = profile::list(&db, &ProfileQuery::default(), true).unwrap();
+    let active = page.items.iter().find(|p| p.uid == "u-active").unwrap();
+    let expired = page.items.iter().find(|p| p.uid == "u-expired").unwrap();
+    assert_eq!(active.guard_level, Some(1));
+    assert_eq!(active.last_guard_level, Some(1));
+    assert!(!active.guard_expired);
+    assert_eq!(expired.guard_level, None, "过期成员不应出现在当前等级中");
+    assert_eq!(expired.last_guard_level, Some(3), "过期成员仍保留历史等级用于灰化徽章");
+    assert!(expired.guard_expired);
+    // 按等级筛选只应命中当前在舰成员
+    let filtered = profile::list(&db, &ProfileQuery { guard_level: Some(3), ..Default::default() }, true).unwrap();
+    assert_eq!(filtered.total, 0);
+}
+
+#[test]
+fn ledger_create_returns_the_row_it_inserted_despite_activity_logging() {
+    let (_tmp, state) = temp_state();
+    let db = state.lock_db().unwrap();
+    // 让 activity_log 的 rowid 远大于 ledger_entry，复现实测报告 P1 的触发条件：
+    // 旧实现把 last_insert_rowid() 放在 log_activity 之后取值，会拿到 activity_log 的 id。
+    for i in 0..12 {
+        crate::db::log_activity(&db.conn, "test", &format!("预热活动 {i}")).unwrap();
+    }
+    let created = ledger::create(&db, &LedgerInput {
+        entry_type: "expense".into(), category: "快递费".into(), amount_yuan: 45.0,
+        occurred_at: "2026-11-14".into(), batch_id: None,
+        guard_event_id: None, note: Some("保存误报回归".into()),
+    }).unwrap();
+    assert_eq!(created.category, "快递费");
+    assert_eq!(created.amount_yuan, 45.0);
+    assert_eq!(created.note, "保存误报回归");
+    let rows = ledger::list(&db, &LedgerQuery::default()).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, created.id);
+    assert_eq!(ledger::summary(&db).unwrap().total_expense_yuan, 45.0);
 }
 
 #[test]

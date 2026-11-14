@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoInvoke, resetDemoState } from "@/lib/demoAdapter";
 import type {
-  BootstrapDto, GiftBatchDto, GiftShipmentDto, LedgerEntryDto, LedgerSummaryDto,
-  ReminderDto, SyncQrDto, SyncQrPollDto, SyncSnapshotResultDto, SyncStatusDto,
+  BootstrapDto, FanProfileDto, GiftBatchDto, GiftShipmentDto, LedgerEntryDto, LedgerSummaryDto,
+  Paged, ReminderDto, SyncQrDto, SyncQrPollDto, SyncSnapshotResultDto, SyncStatusDto,
 } from "@/types/dto";
 
 function invoke<T>(command: string, args: Record<string, unknown> = {}): T {
@@ -88,12 +88,28 @@ describe("舰礼寄送台账", () => {
   });
 });
 
+describe("档案的大航海状态", () => {
+  it("过期成员保留历史等级但不再计入当前等级", () => {
+    const page = invoke<Paged<FanProfileDto>>("profile_list", { pageSize: 50 });
+    const expired = page.items.find((p) => p.uid === "1000013")!;
+    expect(expired.guardExpired).toBe(true);
+    expect(expired.guardLevel).toBeNull();
+    expect(expired.lastGuardLevel).toBe(3);
+    const active = page.items.find((p) => p.uid === "1000001")!;
+    expect(active.guardExpired).toBe(false);
+    expect(active.guardLevel).toBe(2);
+    const level3 = invoke<Paged<FanProfileDto>>("profile_list", { guardLevel: 3, pageSize: 50 });
+    expect(level3.items.some((p) => p.uid === "1000013")).toBe(false);
+  });
+});
+
 describe("主播记账本", () => {
   it("手动记账、事件幂等归集与汇总", () => {
     const created = invoke<LedgerEntryDto>("ledger_create", {
       entryType: "expense", category: "快递费", amountYuan: 20, occurredAt: "2026-11-14", note: "测试",
     });
     expect(created.amountYuan).toBe(20);
+    expect(invoke<LedgerEntryDto[]>("ledger_list").some((e) => e.id === created.id && e.amountYuan === 20)).toBe(true);
     expect(() => invoke("ledger_create", {
       entryType: "income", category: "大航海", amountYuan: 0, occurredAt: "2026-11-14",
     })).toThrow();

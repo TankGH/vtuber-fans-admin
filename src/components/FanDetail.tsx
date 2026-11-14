@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { X, Eye, LockKeyhole, UnlockKeyhole, History, MapPin, Cake, Pencil } from "lucide-react";
+import { X, Eye, LockKeyhole, UnlockKeyhole, History, MapPin, Cake, Pencil, Sparkles } from "lucide-react";
 import { Badge, Button, Card, SectionHint } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { GuardBadge } from "@/components/GuardBadge";
 import { callSafe, ADDRESS_STATUS_TEXT, GUARD_LEVEL_TEXT, formatDateTime } from "@/lib/ipc";
+import { zodiacFromBirthday } from "@/lib/zodiac";
 import type { AddressDto, FanProfileDto, FieldName } from "@/types/dto";
 
 const LOCKABLE: Array<[FieldName, string]> = [
@@ -18,6 +20,11 @@ export function FanDetail({ profile, onClose, onEdit, onChanged }: {
 }) {
   const [confirmAddress, setConfirmAddress] = useState(false);
   const [address, setAddress] = useState<AddressDto | null>(null);
+  const zodiac = zodiacFromBirthday(profile.birthdayMasked);
+  const badgeLevel = profile.guardLevel ?? profile.lastGuardLevel;
+  const levelLabel = profile.guardExpired
+    ? "已过期"
+    : profile.guardLevel ? GUARD_LEVEL_TEXT[profile.guardLevel] : "未在舰";
 
   const reveal = async () => {
     const { data, error } = await callSafe<AddressDto | null>("profile_reveal_address", { uid: profile.uid, confirm: true });
@@ -46,8 +53,12 @@ export function FanDetail({ profile, onClose, onEdit, onChanged }: {
           <button onClick={onClose} aria-label="关闭详情" className="text-muted hover:text-ink cursor-pointer"><X size={18} /></button>
         </header>
 
-        <div className="flex flex-wrap gap-2">
-          <Badge tone="primary">{profile.guardLevel ? GUARD_LEVEL_TEXT[profile.guardLevel] : "未在舰"}</Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1.5">
+            <GuardBadge level={badgeLevel} expired={profile.guardExpired} size={24} />
+            <Badge tone={profile.guardExpired ? "danger" : "primary"}>{levelLabel}</Badge>
+          </span>
+          <Badge tone="neutral">星座 · {zodiac ?? "未登记"}</Badge>
           <Badge tone={profile.addressStatus === "valid" ? "success" : "neutral"}>地址 · {ADDRESS_STATUS_TEXT[profile.addressStatus]}</Badge>
           <Badge tone="neutral">来源 · {profile.source === "import" ? "导入" : "手动录入"}</Badge>
         </div>
@@ -55,6 +66,7 @@ export function FanDetail({ profile, onClose, onEdit, onChanged }: {
         <Card title="基础信息" extra={<Button className="px-2.5 py-1.5 text-xs" onClick={onEdit}><Pencil size={13} /> 编辑</Button>}>
           <div className="grid grid-cols-2 gap-y-4 text-sm">
             <Info icon={Cake} label="生日（脱敏）" value={profile.birthdayMasked ?? "未登记"} />
+            <Info icon={Sparkles} label="星座" value={zodiac ?? "未登记"} />
             <Info icon={MapPin} label="地址（脱敏）" value={profile.addressMasked ?? "未登记"} />
             <Info label="首次互动" value={profile.firstInteractionAt ?? "未登记"} />
             <Info label="上舰周年" value={profile.guardAnniversaryDate ?? "未登记"} />

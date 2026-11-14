@@ -177,6 +177,8 @@ function toDto(input: FanProfileInput, base?: FanProfileDto): FanProfileDto {
     manualLockedFields: locked,
     guardLevel: base?.guardLevel ?? null,
     rank: base?.rank ?? null,
+    lastGuardLevel: base?.lastGuardLevel ?? base?.guardLevel ?? null,
+    guardExpired: base?.guardExpired ?? false,
     source: base?.source ?? "manual",
     createdAt: base?.createdAt ?? now(),
     updatedAt: now(),
