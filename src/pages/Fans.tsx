@@ -1,0 +1,120 @@
+import { useCallback, useEffect, useState } from "react";
+import { Search, UserPlus, LockKeyhole, ShieldCheck, RotateCw } from "lucide-react";
+import { Card, Badge, Button, Field, SelectField, SectionHint } from "@/components/ui";
+import { DataTable, type Column } from "@/components/DataTable";
+import { FanDetail } from "@/components/FanDetail";
+import { FanFormModal } from "@/components/FanFormModal";
+import { callSafe, ADDRESS_STATUS_TEXT, GUARD_LEVEL_TEXT } from "@/lib/ipc";
+import { useApp } from "@/lib/appContext";
+import type { AddressStatus, FanProfileDto, FanProfileInput, GuardLevel, Paged, ProfileQuery } from "@/types/dto";
+
+export default function Fans() {
+  const { refresh, notify } = useApp();
+  const [query, setQuery] = useState<ProfileQuery>({ keyword: "", page: 1, pageSize: 10 });
+  const [data, setData] = useState<Paged<FanProfileDto> | null>(null);
+  const [selected, setSelected] = useState<FanProfileDto | null>(null);
+  const [editing, setEditing] = useState<FanProfileDto | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data: result, error } = await callSafe<Paged<FanProfileDto>>("profile_list", query as unknown as Record<string, unknown>);
+    setLoading(false);
+    if (error) { notify({ tone: "error", title: error.message, detail: error.action }); return; }
+    setData(result);
+  }, [query, notify]);
+
+  useEffect(() => { load().catch((err: unknown) => console.error("档案加载失败：", err)); }, [load]);
+
+  const setQ = (patch: Partial<ProfileQuery>) => setQuery((q) => ({ ...q, ...patch, page: 1 }));
+
+  const submit = async (input: FanProfileInput) => {
+    const command = editing ? "profile_update" : "profile_create";
+    const args = editing ? { uid: editing.uid, input } : { input };
+    const { error } = await callSafe(command, args);
+    if (error) { notify({ tone: "error", title: error.message, detail: error.action }); return; }
+    notify({ tone: "success", title: editing ? "档案已更新" : "档案已创建", detail: `${input.currentNickname}（${input.uid}）的敏感字段已加密保存` });
+    await load();
+    await refresh();
+  };
+
+  const columns: Column<FanProfileDto>[] = [
+    { key: "uid", title: "UID", width: "130px", render: (p) => <span className="masked-value text-muted">{p.uid}</span> },
+    { key: "nickname", title: "当前昵称", render: (p) => (
+      <div className="flex items-center gap-2"><span className="font-medium">{p.currentNickname}</span>
+        {p.manualLockedFields.length > 0 && <LockKeyhole size={12} className="text-warning" />}</div>
+    ) },
+    { key: "level", title: "等级", width: "90px", render: (p) => p.guardLevel ? <Badge tone={p.guardLevel === 1 ? "warning" : p.guardLevel === 2 ? "primary" : "neutral"}>{GUARD_LEVEL_TEXT[p.guardLevel]}</Badge> : <span className="text-muted">—</span> },
+    { key: "birthday", title: "生日（脱敏）", width: "120px", render: (p) => <span className="masked-value">{p.birthdayMasked ?? "—"}</span> },
+    { key: "address", title: "地址（脱敏）", render: (p) => <span className="text-xs masked-value">{p.addressMasked ?? "—"}</span> },
+    { key: "status", title: "地址审核", width: "110px", render: (p) => <Badge tone={p.addressStatus === "valid" ? "success" : p.addressStatus === "pending" ? "warning" : "neutral"}>{ADDRESS_STATUS_TEXT[p.addressStatus]}</Badge> },
+    { key: "locked", title: "锁定字段", width: "100px", render: (p) => <span className="text-xs text-muted">{p.manualLockedFields.length} 项</span> },
+  ];
+
+  return (
+    <div className="flex flex-col gap-5">
+      <SectionHint tone="neutral">
+        <ShieldCheck size={12} className="inline mr-1" />
+        档案以 B 站 UID 为唯一主键，昵称作为可变属性并保留变更历史。地址与生日加密存储、默认脱敏；同 UID 重复导入会保留最早首次互动时间与手动锁定字段。
+      </SectionHint>
+
+      <Card>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              className="field pl-9"
+              placeholder="搜索 UID 或昵称（含空格、生僻字可精确匹配）"
+              value={query.keyword ?? ""}
+              onChange={(e) => setQ({ keyword: e.target.value })}
+            />
+          </div>
+          <SelectField label="舰长等级" className="w-[130px]" value={query.guardLevel ?? ""} onChange={(e) => setQ({ guardLevel: e.target.value ? (Number(e.target.value) as GuardLevel) : null })}>
+            <option value="">全部等级</option><option value="1">总督</option><option value="2">提督</option><option value="3">舰长</option>
+          </SelectField>
+          <SelectField label="地址审核" className="w-[140px]" value={query.addressStatus ?? ""} onChange={(e) => setQ({ addressStatus: (e.target.value || null) as AddressStatus | null })}>
+            <option value="">全部状态</option>
+            {(Object.keys(ADDRESS_STATUS_TEXT) as AddressStatus[]).map((k) => <option key={k} value={k}>{ADDRESS_STATUS_TEXT[k]}</option>)}
+          </SelectField>
+          <label className="flex items-center gap-2 text-sm pb-2.5 cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 cursor-pointer accent-[var(--primary)]" checked={query.onlyLocked ?? false} onChange={(e) => setQ({ onlyLocked: e.target.checked })} />
+            仅看手动锁定
+          </label>
+          <Button className="mb-0.5" onClick={() => load()}><RotateCw size={14} /> 刷新</Button>
+          <Button variant="primary" className="mb-0.5" onClick={() => { setEditing(null); setFormOpen(true); }}><UserPlus size={14} /> 新建档案</Button>
+        </div>
+      </Card>
+
+      <Card title="粉丝档案列表" extra={<Badge tone="primary">{data?.total ?? 0} 位粉丝</Badge>}>
+        <DataTable
+          columns={columns}
+          rows={data?.items ?? []}
+          rowKey={(p) => p.uid}
+          onRowClick={(p) => setSelected(p)}
+          emptyTitle={loading ? "正在加载…" : "没有匹配的档案"}
+          emptyDesc="调整筛选条件，或新建档案 / 导入名单"
+          page={data?.page}
+          pageSize={data?.pageSize}
+          total={data?.total}
+          onPageChange={(page) => setQuery((q) => ({ ...q, page }))}
+        />
+      </Card>
+
+      {selected && (
+        <FanDetail
+          profile={selected}
+          onClose={() => setSelected(null)}
+          onEdit={() => { setEditing(selected); setSelected(null); setFormOpen(true); }}
+          onChanged={async () => {
+            await load();
+            const { data: fresh } = await callSafe<FanProfileDto>("profile_get", { uid: selected.uid });
+            if (fresh) setSelected(fresh);
+          }}
+        />
+      )}
+
+      <FanFormModal open={formOpen} profile={editing} onClose={() => setFormOpen(false)} onSubmit={submit} />
+    </div>
+  );
+}

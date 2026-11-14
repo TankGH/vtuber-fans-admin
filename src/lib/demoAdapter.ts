@@ -1,0 +1,343 @@
+import type {
+  AddressDto,
+  BackupDto,
+  BootstrapDto,
+  ExportResult,
+  FanProfileDto,
+  FanProfileInput,
+  GuardEventDto,
+  GuardMemberDto,
+  ImportCommitArgs,
+  ImportParseArgs,
+  ImportPreview,
+  ImportResult,
+  Paged,
+  ProfileQuery,
+  RestorePlan,
+  SettingsDto,
+  SettingsInput,
+  SnapshotDto,
+  ThemeKey,
+} from "@/types/dto";
+import {
+  DEFAULT_SETTINGS,
+  seedActivities,
+  seedBackups,
+  seedEvents,
+  seedGuardMembers,
+  seedProfiles,
+  seedSnapshots,
+} from "@/lib/demoData";
+import { buildPreview, buildRows, earliestInteraction } from "@/lib/importLogic";
+
+const STORAGE_KEY = "vtuber-fans-admin.demo.v1";
+
+// Node / Vitest 环境没有 localStorage，用进程内状态回退，保证写操作可验证
+let memoryState: DemoState | null = null;
+
+interface DemoState {
+  profiles: FanProfileDto[];
+  guardMembers: GuardMemberDto[];
+  snapshots: SnapshotDto[];
+  events: GuardEventDto[];
+  backups: BackupDto[];
+  settings: SettingsDto;
+  activities: ReturnType<typeof seedActivities>;
+  addresses: Record<string, AddressDto>;
+  importContent: string;
+  nextImportBatchId: number;
+}
+
+function initialState(): DemoState {
+  const addresses: Record<string, AddressDto> = {
+    "1000001": { uid: "1000001", receiver: "林先生", phone: "138****6621", province: "上海市", city: "上海市", district: "浦东新区", detail: "世纪大道 100 号 32 层", addressStatus: "pending" },
+    "1000003": { uid: "1000003", receiver: "白女士", phone: "139****2048", province: "广东省", city: "深圳市", district: "南山区", detail: "科技园北区 8 栋", addressStatus: "valid" },
+  };
+  return {
+    profiles: seedProfiles(),
+    guardMembers: seedGuardMembers(),
+    snapshots: seedSnapshots(),
+    events: seedEvents(),
+    backups: seedBackups(),
+    settings: { ...DEFAULT_SETTINGS },
+    activities: seedActivities(),
+    addresses,
+    importContent: "",
+    nextImportBatchId: 7,
+  };
+}
+
+function load(): DemoState {
+  if (typeof localStorage === "undefined") {
+    if (!memoryState) memoryState = initialState();
+    return memoryState;
+  }
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return initialState();
+  const parsed = JSON.parse(raw) as Partial<DemoState>;
+  return { ...initialState(), ...parsed, settings: { ...DEFAULT_SETTINGS, ...parsed.settings } };
+}
+
+function save(state: DemoState): void {
+  if (typeof localStorage === "undefined") {
+    memoryState = state;
+    return;
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+function logActivity(state: DemoState, kind: string, summary: string): void {
+  state.activities.unshift({ id: Date.now(), kind, summary, createdAt: now() });
+  state.activities = state.activities.slice(0, 30);
+}
+
+function maskAddress(raw: string): string {
+  const parts = raw.split(/[·|,，\s]+/).filter(Boolean);
+  return parts.slice(0, 3).join(" · ") || "已登记";
+}
+
+function maskBirthday(raw: string): string {
+  const m = raw.match(/(\d{1,2})[-/月](\d{1,2})/);
+  return m ? `${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}` : raw;
+}
+
+function toDto(input: FanProfileInput, base?: FanProfileDto): FanProfileDto {
+  const locked = [...new Set([...(base?.manualLockedFields ?? []), ...(input.manualLockedFields ?? [])])];
+  return {
+    uid: input.uid,
+    currentNickname: input.currentNickname,
+    nicknameHistory: base
+      ? base.currentNickname !== input.currentNickname
+        ? [...base.nicknameHistory, input.currentNickname]
+        : base.nicknameHistory
+      : [input.currentNickname],
+    firstInteractionAt: input.firstInteractionAt ?? base?.firstInteractionAt ?? null,
+    birthdayMasked: input.birthday ? maskBirthday(`${input.birthday.month}-${input.birthday.day}`) : (base?.birthdayMasked ?? null),
+    addressMasked: input.address ? maskAddress(`${input.address.province}·${input.address.city}·${input.address.district}`) : (base?.addressMasked ?? null),
+    addressStatus: input.addressStatus ?? base?.addressStatus ?? "none",
+    guardAnniversaryDate: input.guardAnniversaryDate ?? base?.guardAnniversaryDate ?? null,
+    watchAnniversaryDate: input.watchAnniversaryDate ?? base?.watchAnniversaryDate ?? null,
+    note: input.note ?? base?.note ?? "",
+    manualLockedFields: locked,
+    guardLevel: base?.guardLevel ?? null,
+    rank: base?.rank ?? null,
+    source: base?.source ?? "manual",
+    createdAt: base?.createdAt ?? now(),
+    updatedAt: now(),
+  };
+}
+
+export function resetDemoState(): void {
+  memoryState = null;
+  if (typeof localStorage !== "undefined") localStorage.removeItem(STORAGE_KEY);
+}
+
+export function isNative(): boolean {
+  return typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
+}
+
+export function getTheme(): ThemeKey {
+  const s = load();
+  return s.settings.theme;
+}
+
+type Handler = (args: Record<string, unknown>) => unknown;
+
+function bootstrap(): BootstrapDto {
+  const state = load();
+  const last = state.backups[0]?.createdAt ?? null;
+  const days = last ? Math.floor((Date.now() - new Date(last).getTime()) / 86400000) : null;
+  return {
+    fanCount: state.profiles.length,
+    guardCount: state.guardMembers.filter((g) => g.status === "active").length,
+    snapshotCount: state.snapshots.length,
+    conflictCount: 0,
+    settings: state.settings,
+    backupHealth: {
+      lastBackupAt: last,
+      daysSinceBackup: days,
+      backupCount: state.backups.length,
+      healthy: days === null || days <= 3,
+    },
+    activities: state.activities,
+    dataDir: state.settings.dataDir,
+    nativeMode: false,
+  };
+}
+
+function profileList(args: Record<string, unknown>): Paged<FanProfileDto> {
+  const q = args as unknown as ProfileQuery;
+  const state = load();
+  const kw = (q.keyword ?? "").toLowerCase();
+  const filtered = state.profiles.filter((p) => {
+    if (kw && !p.uid.toLowerCase().includes(kw) && !p.currentNickname.toLowerCase().includes(kw)) return false;
+    if (q.guardLevel && p.guardLevel !== q.guardLevel) return false;
+    if (q.addressStatus && p.addressStatus !== q.addressStatus) return false;
+    if (q.onlyLocked && p.manualLockedFields.length === 0) return false;
+    return true;
+  });
+  const page = q.page ?? 1;
+  const pageSize = q.pageSize ?? 10;
+  return { items: filtered.slice((page - 1) * pageSize, page * pageSize), total: filtered.length, page, pageSize };
+}
+
+const handlers: Record<string, Handler> = {
+  app_bootstrap: () => bootstrap(),
+  profile_list: (a) => profileList(a),
+  profile_get: (a) => {
+    const p = load().profiles.find((x) => x.uid === a.uid);
+    if (!p) throw { code: "E_NOT_FOUND", message: "未找到该粉丝档案" };
+    return p;
+  },
+  profile_create: (a) => {
+    const state = load();
+    const input = a.input as FanProfileInput;
+    if (state.profiles.some((p) => p.uid === input.uid)) throw { code: "E_INVALID_INPUT", message: "该 UID 已存在，请使用档案合并或导入" };
+    const dto = toDto({ ...input, manualLockedFields: ["nickname", "birthday", "address", "note"] });
+    state.profiles.unshift(dto);
+    if (input.address) state.addresses[input.uid] = { ...input.address, uid: input.uid, addressStatus: input.addressStatus ?? "pending" };
+    logActivity(state, "profile", `新建档案 ${dto.currentNickname}（${dto.uid}）`);
+    save(state);
+    return dto;
+  },
+  profile_update: (a) => {
+    const state = load();
+    const input = a.input as FanProfileInput;
+    const idx = state.profiles.findIndex((p) => p.uid === a.uid);
+    if (idx < 0) throw { code: "E_NOT_FOUND", message: "未找到该粉丝档案" };
+    const dto = toDto(input, state.profiles[idx]);
+    state.profiles[idx] = dto;
+    if (input.address) state.addresses[dto.uid] = { ...input.address, uid: dto.uid, addressStatus: input.addressStatus ?? "pending" };
+    logActivity(state, "profile", `更新档案 ${dto.currentNickname} 的资料`);
+    save(state);
+    return dto;
+  },
+  profile_reveal_address: (a) => {
+    if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "查看完整地址需要二次确认" };
+    const addr = load().addresses[a.uid as string];
+    return addr ?? null;
+  },
+  profile_set_lock: (a) => {
+    const state = load();
+    const p = state.profiles.find((x) => x.uid === a.uid);
+    if (!p) throw { code: "E_NOT_FOUND", message: "未找到该粉丝档案" };
+    const field = a.field as FanProfileDto["manualLockedFields"][number];
+    p.manualLockedFields = a.locked
+      ? [...new Set([...p.manualLockedFields, field])]
+      : p.manualLockedFields.filter((f) => f !== field);
+    p.updatedAt = now();
+    save(state);
+    return p;
+  },
+  guard_list: () => ({ items: load().guardMembers, total: load().guardMembers.length, page: 1, pageSize: 50 }),
+  guard_snapshots: () => load().snapshots,
+  guard_events: (a) => {
+    const list = load().events;
+    return a.uid ? list.filter((e) => e.uid === a.uid) : list;
+  },
+  import_parse: (a) => {
+    const args = a as unknown as ImportParseArgs;
+    const content = args.fileContent || "";
+    if (!content.trim()) throw { code: "E_IMPORT_FORMAT", message: "文件内容为空或格式无法识别" };
+    const state = load();
+    const preview = buildPreview(content, args.mapping, state.profiles);
+    state.importContent = content;
+    save(state);
+    return preview;
+  },
+  import_commit: (a) => {
+    const args = a as unknown as ImportCommitArgs;
+    const state = load();
+    const content = args.fileContent || state.importContent;
+    const preview = buildPreview(content, args.mapping, state.profiles) as ImportPreview;
+    const { rows } = buildRows(content, args.mapping);
+    let newCount = 0;
+    let mergeCount = 0;
+    rows.forEach((r) => {
+      if (!r.uid || !r.nickname) return;
+      const idx = state.profiles.findIndex((p) => p.uid === r.uid);
+      if (idx < 0) {
+        newCount += 1;
+        state.profiles.push(toDto({ uid: r.uid, currentNickname: r.nickname, firstInteractionAt: r.firstInteractionAt || null, note: r.note }, undefined));
+      } else {
+        mergeCount += 1;
+        const p = state.profiles[idx];
+        state.profiles[idx] = {
+          ...p,
+          currentNickname: p.manualLockedFields.includes("nickname") ? p.currentNickname : r.nickname,
+          nicknameHistory: p.currentNickname !== r.nickname ? [...p.nicknameHistory, r.nickname] : p.nicknameHistory,
+          firstInteractionAt: earliestInteraction(p.firstInteractionAt, r.firstInteractionAt),
+          note: p.manualLockedFields.includes("note") ? p.note : r.note || p.note,
+          addressMasked: r.address && !p.manualLockedFields.includes("address") ? maskAddress(r.address) : p.addressMasked,
+          birthdayMasked: r.birthday && !p.manualLockedFields.includes("birthday") ? maskBirthday(r.birthday) : p.birthdayMasked,
+          guardLevel: r.guardLevel ?? p.guardLevel,
+          rank: r.rank ?? p.rank,
+          updatedAt: now(),
+        };
+      }
+      if (r.guardLevel) {
+        const gi = state.guardMembers.findIndex((g) => g.uid === r.uid);
+        if (gi >= 0) state.guardMembers[gi] = { ...state.guardMembers[gi], nickname: r.nickname, guardLevel: r.guardLevel, rank: r.rank };
+        else state.guardMembers.push({ uid: r.uid, nickname: r.nickname, guardLevel: r.guardLevel, rank: r.rank, validUntil: null, status: "active", snapshotDate: args.snapshotDate ?? null });
+      }
+    });
+    const result: ImportResult = {
+      batchId: state.nextImportBatchId++,
+      totalRows: preview.totalRows,
+      newCount,
+      mergeCount,
+      skippedCount: preview.invalidCount,
+      errors: preview.conflicts.map((c) => `第 ${c.row} 行：${c.reason}`),
+      createdAt: now(),
+    };
+    logActivity(state, "import", `导入 ${args.fileName ?? "名单"}：新增 ${newCount}、合并 ${mergeCount}`);
+    save(state);
+    return result;
+  },
+  backup_list: () => load().backups,
+  backup_now: () => {
+    const state = load();
+    const id = now().replace(/\D/g, "").slice(0, 14);
+    const dto: BackupDto = {
+      id, fileName: `backup-${id}.enc`, createdAt: now(), sizeBytes: 186000 + Math.floor(Math.random() * 4000),
+      fanCount: state.profiles.length, snapshotCount: state.snapshots.length, eventCount: state.events.length,
+      sha256: Math.random().toString(16).slice(2, 18), verified: true,
+    };
+    state.backups.unshift(dto);
+    state.backups = state.backups.slice(0, 7);
+    logActivity(state, "backup", "手动立即备份完成，保留最近 7 份");
+    save(state);
+    return dto;
+  },
+  backup_export_db: (a) => ({ path: (a.destPath as string) || "fans-db-export.enc", sizeBytes: 186368, masked: false } as ExportResult),
+  backup_export_csv: (a) => ({ path: (a.destPath as string) || "fans-masked-export.csv", sizeBytes: 4096, masked: true } as ExportResult),
+  restore_prepare: (a) => {
+    if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "恢复操作需要二次确认" };
+    const state = load();
+    const target = state.backups.find((b) => b.id === a.backupId);
+    if (!target) throw { code: "E_RESTORE_VERIFY", message: "找不到所选备份" };
+    logActivity(state, "restore", `准备从 ${target.createdAt} 恢复，已自动创建安全备份`);
+    save(state);
+    return { backupId: target.id, safetyBackupId: "safety-" + target.id, fanCount: target.fanCount, requiresRestart: true, message: "已创建安全备份并写入恢复标记，重启应用后完成恢复" } as RestorePlan;
+  },
+  settings_get: () => load().settings,
+  settings_update: (a) => {
+    const state = load();
+    const input = a.input as SettingsInput;
+    state.settings = { ...state.settings, ...input };
+    if (input.theme) logActivity(state, "theme", `主题切换为 ${({ galaxy: "守村人深蓝", mist: "晨雾浅色", aurora: "暖霞" } as Record<ThemeKey, string>)[input.theme]}`);
+    save(state);
+    return state.settings;
+  },
+  open_data_dir: () => null,
+};
+
+export function demoInvoke<T>(command: string, args: Record<string, unknown>): T {
+  const handler = handlers[command];
+  if (!handler) throw { code: "E_INTERNAL", message: `演示模式未实现命令 ${command}` };
+  return handler(args) as T;
+}
