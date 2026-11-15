@@ -119,12 +119,14 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
+/// 统一使用本地时间：UTC+8 的 00:00–08:00 不应把「今天」算成昨天。
+/// 同步引擎也用 Local::now()，两处口径保持一致。
 pub fn now_iso() -> String {
-    chrono::Utc::now().to_rfc3339()
+    chrono::Local::now().to_rfc3339()
 }
 
 pub fn today() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
+    chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
 // ---- Windows DPAPI：主密钥只以受保护形态落盘 ----

@@ -180,11 +180,19 @@ pub fn reveal_address(db: &Db, id: i64, confirm: bool) -> AppResult<AddressDto> 
 pub fn export_masked(db: &Db, data_dir: &Path, batch_id: i64, dest_path: Option<&str>, confirm: bool) -> AppResult<ExportResult> {
     if !confirm { return Err(AppError::invalid("导出寄送清单需要二次确认")); }
     let items = shipment_list(db, batch_id)?;
+    // 与 F6 备份/导出统一落在用户在首启引导里选定的备份目录，便于查找；
+    // destPath 仍可显式覆盖。加时间戳避免同批次重复导出互相覆盖。
     let path = dest_path
         .filter(|s| !s.trim().is_empty())
         .map(Path::new)
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| data_dir.join(format!("gift-batch-{batch_id}-masked.csv")));
+        .unwrap_or_else(|| crate::settings::backup_root(data_dir).join(
+            format!("gift-batch-{batch_id}-masked-{}.csv", chrono::Local::now().format("%Y%m%d-%H%M%S")),
+        ));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::new("E_BACKUP_DIR", format!("备份目录不可写：{e}")))?;
+    }
     let mut writer = csv::Writer::from_path(&path)
         .map_err(|e| AppError::new("E_BACKUP_IO", format!("寄送清单写入失败：{e}")))?;
     writer.write_record(["uid", "nickname", "guard_level", "address_masked", "shipment_status", "tracking_no"])

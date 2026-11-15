@@ -17,6 +17,10 @@ export const DEFAULT_MAPPING: ImportMapping = {
   birthday: "birthday",
   address: "address",
   note: "note",
+  unitMonths: "unit_months",
+  priceYuan: "price_yuan",
+  eventType: "event_type",
+  eventAt: "event_at",
 };
 
 const HEADER_ALIASES: Record<keyof ImportMapping, string[]> = {
@@ -28,6 +32,10 @@ const HEADER_ALIASES: Record<keyof ImportMapping, string[]> = {
   birthday: ["birthday", "生日"],
   address: ["address", "地址", "收货地址"],
   note: ["note", "备注", "说明"],
+  unitMonths: ["unit_months", "月数", "购买月数", "guard_unit"],
+  priceYuan: ["price_yuan", "金额", "价格", "price"],
+  eventType: ["event_type", "事件类型", "购买类型", "类型", "order_type"],
+  eventAt: ["event_at", "购买日期", "购买时间", "事件时间", "下单时间"],
 };
 
 export function suggestMapping(headers: string[]): ImportMapping {

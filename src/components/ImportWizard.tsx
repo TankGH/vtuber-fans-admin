@@ -14,7 +14,14 @@ const MAP_FIELDS: Array<[keyof ImportMapping, string]> = [
   ["uid", "UID（必填）"], ["nickname", "昵称（必填）"], ["guardLevel", "大航海等级"],
   ["rank", "排名"], ["firstInteractionAt", "首次互动时间"], ["birthday", "生日"],
   ["address", "地址"], ["note", "备注"],
+  ["unitMonths", "购买月数（生成事件）"], ["priceYuan", "金额（生成事件）"],
+  ["eventType", "事件类型（购买 / 续费）"], ["eventAt", "购买日期"],
 ];
+
+function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 interface FileState {
   name: string;
@@ -31,11 +38,20 @@ export function ImportWizard({ onFinished }: { onFinished: (result: ImportResult
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [snapshotDate, setSnapshotDate] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const reset = () => {
     setStep(0); setFile(null); setPreview(null); setResult(null); setError(null);
-    setMapping(DEFAULT_MAPPING);
+    setMapping(DEFAULT_MAPPING); setSnapshotDate("");
+  };
+
+  const validateDate = (): boolean => {
+    if (snapshotDate && snapshotDate > localToday()) {
+      setError(`快照日期 ${snapshotDate} 晚于今天（${localToday()}），未发起导入。请改为今天或更早的日期；未来日期的名单不应作为当前在舰快照。`);
+      return false;
+    }
+    return true;
   };
 
   const loadText = (name: string, content: string, path?: string) => {
@@ -80,11 +96,11 @@ export function ImportWizard({ onFinished }: { onFinished: (result: ImportResult
   const useSample = () => loadText("fans_sample.csv（内置样例）", SAMPLE_CSV);
 
   const parsePreview = async () => {
-    if (!file) return;
+    if (!file || !validateDate()) return;
     setBusy(true);
     const { data, error: err } = await callSafe<ImportPreview>("import_parse", {
       filePath: file.path, fileContent: file.content, fileName: file.name,
-      kind: "fans", mapping,
+      kind: "fans", mapping, snapshotDate: snapshotDate || undefined,
     });
     setBusy(false);
     if (err) { setError(`${err.message} · ${err.action}`); return; }
@@ -94,11 +110,11 @@ export function ImportWizard({ onFinished }: { onFinished: (result: ImportResult
   };
 
   const commit = async () => {
-    if (!file || !preview) return;
+    if (!file || !preview || !validateDate()) return;
     setBusy(true);
     const { data, error: err } = await callSafe<ImportResult>("import_commit", {
       filePath: file.path, fileContent: file.content, fileName: file.name,
-      kind: "fans", mapping,
+      kind: "fans", mapping, snapshotDate: snapshotDate || undefined,
     });
     setBusy(false);
     if (err) { setError(`${err.message} · ${err.action}`); return; }
@@ -167,7 +183,14 @@ export function ImportWizard({ onFinished }: { onFinished: (result: ImportResult
                 </SelectField>
               ))}
             </div>
-            <Field label="快照日期（可选）" placeholder="例如 2026-11-13" hint="用于把本次导入关联到某一天的在舰名单快照" />
+            <Field
+              label="快照日期（可选，不能晚于今天）"
+              type="date"
+              max={localToday()}
+              value={snapshotDate}
+              onChange={(e) => setSnapshotDate(e.target.value)}
+              hint={`留空使用今天（${localToday()}）。未来日期会被明确拒绝，不会静默忽略或写坏当前在舰名单。`}
+            />
             <div className="flex justify-end gap-2">
               <Button onClick={() => setStep(0)}>上一步</Button>
               <Button variant="primary" disabled={!mapping.uid || !mapping.nickname || busy} onClick={parsePreview}>
@@ -207,7 +230,13 @@ export function ImportWizard({ onFinished }: { onFinished: (result: ImportResult
 
         {step === 3 && result && (
           <div className="flex flex-col gap-4">
-            <StatusBanner tone="success" title="导入完成" detail={`新增 ${result.newCount} 条、合并 ${result.mergeCount} 条、跳过 ${result.skippedCount} 条；批次编号 #${result.batchId}`} />
+            <StatusBanner tone="success" title="导入完成" detail={`新增 ${result.newCount} 条、合并 ${result.mergeCount} 条、跳过 ${result.skippedCount} 条；生成 ${result.eventCount} 条购买 / 续费事件（可在记账本归集）；快照日期 ${result.snapshotDate}；批次编号 #${result.batchId}`} />
+            {result.warnings.length > 0 && (
+              <SectionHint tone="warning">
+                <p className="font-medium mb-1">导入提示</p>
+                {result.warnings.map((w, i) => <p key={i}>· {w}</p>)}
+              </SectionHint>
+            )}
             {result.errors.length > 0 && (
               <SectionHint tone="warning">
                 <p className="font-medium mb-1">逐行结果（{result.errors.length} 条提示）</p>

@@ -117,7 +117,7 @@ flowchart TB
 | `guard.rs` | 快照/成员/事件查询与有效期核算 | 纯数据层，无网络 |
 | `sync/mod.rs` | `SyncSource` trait、凭证加密存取、扫码会话、快照合并、每日调度 | 只在 `syncEnabled=true` 时访问网络；同日重复同步覆盖同一快照 |
 | `sync/bilibili.rs` | 扫码登录、WBI 签名、大航海名单解析 | 纯同步函数，只在 `spawn_blocking` / 后台线程调用，不阻塞 UI |
-| `reminder.rs` / `gifts.rs` / `ledger.rs` | F3 / F4 / F5 领域服务 | 生日脱敏、完整地址二次确认、事件归集幂等 |
+| `reminder.rs` / `gifts.rs` / `ledger.rs` | F3 / F4 / F5 领域服务 | 生日脱敏、完整地址二次确认、事件归集幂等；`reminder.rs` 另按上舰起算日生成 N 天 / N 周年里程碑，并管理 `custom_reminder` 表（动态类型 `guard_days_*` / `guard_years_*` / `custom_*`） |
 | `backup.rs` | 启动备份、7 份滚动、manifest、恢复标记、导出 | 恢复走重启替换，避免文件占用 |
 | `settings.rs` | 主题、备份目录、托盘行为、同步开关与提醒配置 | 开启同步只由 `sync_set_enabled` 写入且需二次确认 |
 | `commands.rs` | 全部 IPC 命令注册 | 唯一跨语言边界 |

@@ -86,6 +86,20 @@ CREATE TABLE IF NOT EXISTS reminder_ack (
 );
 CREATE INDEX IF NOT EXISTS idx_reminder_ack_date ON reminder_ack(reminder_date);
 
+-- 用户自建纪念日：uid 为空表示全局纪念日（不绑定某个粉丝）
+CREATE TABLE IF NOT EXISTS custom_reminder (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  uid TEXT,
+  anchor_date TEXT NOT NULL,
+  rule TEXT NOT NULL,
+  offset_days INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_custom_reminder_uid ON custom_reminder(uid);
+
 CREATE TABLE IF NOT EXISTS gift_batch (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,

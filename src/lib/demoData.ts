@@ -1,6 +1,7 @@
 import type {
   ActivityDto,
   BackupDto,
+  CustomReminderDto,
   FanProfileDto,
   GiftBatchDto,
   GiftShipmentDto,
@@ -94,6 +95,8 @@ export const DEFAULT_SETTINGS: SettingsDto = {
   syncEnabled: false,
   roomId: "21452505",
   reminderDaysAhead: 3,
+  milestoneHundredsEnabled: true,
+  milestoneYearsEnabled: true,
 };
 
 export function seedGuardMembers(): GuardMemberDto[] {
@@ -150,20 +153,37 @@ function dateOffset(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+type SeedReminder = Pick<ReminderDto, "uid" | "nickname" | "reminderType" | "reminderLabel" | "daysAhead" | "acked">
+  & Partial<Pick<ReminderDto, "source" | "customId" | "milestone" | "greeting">>;
+
 export function seedReminders(): ReminderDto[] {
-  const items: Array<[string, string, ReminderDto["reminderType"], string, number, boolean]> = [
-    ["1000001", "limmax", "birthday", "生日", 0, false],
-    ["1000003", "小白豆浆配油条", "guard_anniversary", "上舰周年", 0, true],
-    ["1000009", "晚 风", "watch_anniversary", "观看纪念日", 1, false],
-    ["1000011", "柚子大姐姐", "birthday", "生日", 2, false],
-    ["1000013", "大幕丶渐起", "guard_anniversary", "上舰周年", 3, false],
+  const items: SeedReminder[] = [
+    { uid: "1000001", nickname: "limmax", reminderType: "birthday", reminderLabel: "生日", daysAhead: 0, acked: false },
+    { uid: "1000003", nickname: "小白豆浆配油条", reminderType: "guard_years_2", reminderLabel: "上舰 2 周年", daysAhead: 0, acked: true, milestone: "2 周年" },
+    { uid: "1000001", nickname: "limmax", reminderType: "guard_days_100", reminderLabel: "上舰 100 天", daysAhead: 1, acked: false, milestone: "第 1 个百日 · 100 天" },
+    { uid: "1000002", nickname: "54736424", reminderType: "guard_days_200", reminderLabel: "上舰 200 天", daysAhead: 3, acked: false, milestone: "第 2 个百日 · 200 天" },
+    { uid: "1000009", nickname: "晚 风", reminderType: "watch_anniversary", reminderLabel: "观看纪念日", daysAhead: 1, acked: false },
+    { uid: "1000011", nickname: "柚子大姐姐", reminderType: "birthday", reminderLabel: "生日", daysAhead: 2, acked: false },
+    { uid: "1000013", nickname: "大幕丶渐起", reminderType: "guard_anniversary", reminderLabel: "上舰周年", daysAhead: 3, acked: false },
+    { uid: "__global__", nickname: "全体", reminderType: "custom_1", reminderLabel: "开播周年庆", daysAhead: 0, acked: false, source: "custom", customId: 1, greeting: "「开播周年庆」到了，记得准备一下～" },
   ];
-  return items.map(([uid, nickname, reminderType, reminderLabel, daysAhead, acked]) => ({
-    uid, nickname, reminderType, reminderLabel,
-    reminderDate: dateOffset(daysAhead), daysAhead, acked,
-    ackedAt: acked ? new Date().toISOString() : null,
-    greeting: `${nickname}，${reminderLabel}快乐！感谢一路相伴。`,
+  return items.map((r) => ({
+    uid: r.uid, nickname: r.nickname, reminderType: r.reminderType,
+    reminderLabel: r.reminderLabel,
+    reminderDate: dateOffset(r.daysAhead), daysAhead: r.daysAhead, acked: r.acked,
+    ackedAt: r.acked ? new Date().toISOString() : null,
+    greeting: r.greeting ?? `${r.nickname}，${r.reminderLabel}快乐！感谢一路相伴。`,
+    source: r.source ?? "auto",
+    customId: r.customId ?? null,
+    milestone: r.milestone ?? null,
   }));
+}
+
+export function seedCustomReminders(): CustomReminderDto[] {
+  return [
+    { id: 1, title: "开播周年庆", uid: null, nickname: null, anchorDate: dateOffset(0), rule: "annual", offsetDays: 0, note: "每年准备一次特别直播", enabled: true, createdAt: "2026-11-01T09:00:00+08:00" },
+    { id: 2, title: "舰礼寄送日", uid: "1000001", nickname: "limmax", anchorDate: dateOffset(2), rule: "once", offsetDays: 0, note: "", enabled: false, createdAt: "2026-11-08T14:20:00+08:00" },
+  ];
 }
 
 export function seedGiftBatches(): GiftBatchDto[] {
@@ -213,9 +233,9 @@ export function seedSyncStatus(): SyncStatusDto {
 }
 
 export const SAMPLE_CSV = [
-  "uid,nickname,guard_level,rank,first_interaction_at,birthday,address,note",
-  "1000014,晚 风,3,14,2026-11-01,05-20,浙江省·杭州市·余杭区,昵称含空格",
-  "1000015,大幕丶渐起,3,15,2026-11-02,12-02,广东省·广州市·天河区,顿号变体勿误判",
-  '1000001,limmax,2,1,2024-01-08,11-15,上海市·上海市·浦东新区,"手动锁定字段示例"',
-  ",无名粉丝,3,16,2026-11-03,,,缺少 UID 应跳过",
+  "uid,nickname,guard_level,rank,first_interaction_at,birthday,address,note,unit_months,price_yuan,event_type,event_at",
+  "1000014,晚 风,3,14,2026-11-01,05-20,浙江省·杭州市·余杭区,昵称含空格,1,198,purchase,2026-11-01",
+  "1000015,大幕丶渐起,3,15,2026-11-02,12-02,广东省·广州市·天河区,顿号变体勿误判,3,588,renew,2026-11-02",
+  '1000001,limmax,2,1,2024-01-08,11-15,上海市·上海市·浦东新区,"手动锁定字段示例",12,1998,renew,2026-11-03',
+  ",无名粉丝,3,16,2026-11-03,,,缺少 UID 应跳过,1,198,purchase,2026-11-03",
 ].join("\n");

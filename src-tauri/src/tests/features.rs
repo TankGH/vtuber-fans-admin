@@ -11,7 +11,8 @@ use crate::guard;
 use crate::ledger;
 use crate::models::{
     BirthdayValue, FanProfileInput, GiftAddressStatusInput, GiftBatchInput, GiftShipmentInput,
-    LedgerInput, LedgerQuery, ProfileQuery, ReminderAckInput, ReminderQuery, SettingsInput,
+    CustomReminderInput, LedgerInput, LedgerQuery, ProfileQuery, ReminderAckInput, ReminderQuery,
+    SettingsDto, SettingsInput, GLOBAL_REMINDER_UID,
 };
 use crate::reminder;
 use crate::settings;
@@ -37,23 +38,217 @@ fn reminder_list_masks_birthday_and_ack_is_idempotent() {
         birthday: Some(BirthdayValue { month: today.month() as i32, day: today.day() as i32, year: Some(1998) }),
         ..Default::default()
     }).unwrap();
-    let list = reminder::list(&db, &ReminderQuery { days_ahead: Some(0), include_acked: Some(false) }).unwrap();
+    let cfg = SettingsDto::default();
+    let list = reminder::list(&db, &ReminderQuery { days_ahead: Some(0), include_acked: Some(false), source: None }, &cfg).unwrap();
     let item = list.iter().find(|r| r.uid == "u-birth" && r.reminder_type == "birthday").expect("今天应有生日提醒");
     assert_eq!(item.days_ahead, 0);
+    assert_eq!(item.source, "auto");
     assert!(!item.greeting.contains("1998"), "提醒话术不得泄露生日年份");
-    assert_eq!(reminder::pending_count(&db, 0).unwrap(), 1);
+    assert_eq!(reminder::pending_count(&db, 0, &cfg).unwrap(), 1);
 
     let input = ReminderAckInput {
         uid: item.uid.clone(), reminder_type: item.reminder_type.clone(),
         reminder_date: item.reminder_date.clone(), acked: Some(true),
     };
-    assert!(reminder::ack(&db, &input).unwrap().acked);
-    assert_eq!(reminder::pending_count(&db, 0).unwrap(), 0);
-    assert!(reminder::ack(&db, &input).is_ok(), "重复标记必须幂等");
+    assert!(reminder::ack(&db, &input, &cfg).unwrap().acked);
+    assert_eq!(reminder::pending_count(&db, 0, &cfg).unwrap(), 0);
+    assert!(reminder::ack(&db, &input, &cfg).is_ok(), "重复标记必须幂等");
     let mut undo = input.clone();
     undo.acked = Some(false);
-    assert!(!reminder::ack(&db, &undo).unwrap().acked);
-    assert_eq!(reminder::pending_count(&db, 0).unwrap(), 1);
+    assert!(!reminder::ack(&db, &undo, &cfg).unwrap().acked);
+    assert_eq!(reminder::pending_count(&db, 0, &cfg).unwrap(), 1);
+}
+
+#[test]
+fn guard_milestones_generate_nth_day_and_nth_anniversary() {
+    let (_tmp, state) = temp_state();
+    let today = chrono::Local::now().date_naive();
+    let db = state.lock_db().unwrap();
+    let anchor = today - chrono::Duration::days(100);
+    profile::create(&db, &FanProfileInput {
+        uid: "u-guard".into(), current_nickname: "老舰长".into(),
+        guard_anniversary_date: Some(anchor.format("%Y-%m-%d").to_string()),
+        ..Default::default()
+    }).unwrap();
+    let cfg = SettingsDto::default();
+    let list = reminder::list(&db, &ReminderQuery { days_ahead: Some(0), include_acked: Some(true), source: None }, &cfg).unwrap();
+    let day100 = list.iter().find(|r| r.reminder_type == "guard_days_100").expect("今天应有上舰 100 天提醒");
+    assert_eq!(day100.days_ahead, 0);
+    assert_eq!(day100.reminder_label, "上舰 100 天");
+    assert_eq!(day100.milestone.as_deref(), Some("第 1 个百日 · 100 天"));
+    assert_eq!(day100.source, "auto");
+    assert!(day100.greeting.contains("100 天"));
+
+    // 100×n 自动延伸：同一年内还能看到 200 / 300 / 400 天节点与第 1 周年
+    let wide_q = ReminderQuery { days_ahead: Some(366), include_acked: Some(true), source: None };
+    let wide = reminder::list(&db, &wide_q, &cfg).unwrap();
+    for days in [100, 200, 300, 400] {
+        assert!(wide.iter().any(|r| r.reminder_type == format!("guard_days_{days}")), "应生成上舰 {days} 天节点");
+    }
+    assert!(!wide.iter().any(|r| r.reminder_type == "guard_days_365"), "不再生成非 100 倍数的天数节点");
+    assert!(wide.iter().any(|r| r.reminder_type.starts_with("guard_years_")));
+
+    // 两个开关互不影响：只关百日时周年仍在，只关周年时百日仍在
+    let mut no_hundreds = cfg.clone();
+    no_hundreds.milestone_hundreds_enabled = false;
+    let a = reminder::list(&db, &wide_q, &no_hundreds).unwrap();
+    assert!(!a.iter().any(|r| r.reminder_type.starts_with("guard_days_")));
+    assert!(a.iter().any(|r| r.reminder_type.starts_with("guard_years_")));
+
+    let mut no_years = cfg.clone();
+    no_years.milestone_years_enabled = false;
+    let b = reminder::list(&db, &wide_q, &no_years).unwrap();
+    assert!(b.iter().any(|r| r.reminder_type.starts_with("guard_days_")));
+    assert!(!b.iter().any(|r| r.reminder_type.starts_with("guard_years_")));
+
+    let mut off = cfg.clone();
+    off.milestone_hundreds_enabled = false;
+    off.milestone_years_enabled = false;
+    let muted = reminder::list(&db, &wide_q, &off).unwrap();
+    assert!(!muted.iter().any(|r| r.reminder_type.starts_with("guard_days_")));
+    assert!(!muted.iter().any(|r| r.reminder_type.starts_with("guard_years_")));
+
+    assert_eq!(reminder::anniversary_for_test("2024-02-29", "2026-11-14"), Some(("2027-02-28".into(), 3)));
+    assert_eq!(reminder::anniversary_for_test("2026-11-20", "2026-11-14"), Some(("2027-11-20".into(), 1)));
+}
+
+#[test]
+fn custom_reminders_support_crud_ack_and_validation() {
+    let (_tmp, state) = temp_state();
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let db = state.lock_db().unwrap();
+    profile::create(&db, &FanProfileInput {
+        uid: "u-custom".into(), current_nickname: "小粉丝".into(), ..Default::default()
+    }).unwrap();
+
+    let saved = reminder::save_custom(&db, &CustomReminderInput {
+        title: "百日纪念".into(), uid: Some("u-custom".into()),
+        anchor_date: today.clone(), rule: "annual".into(), ..Default::default()
+    }).unwrap();
+    assert_eq!(saved.title, "百日纪念");
+    assert_eq!(saved.nickname.as_deref(), Some("小粉丝"));
+
+    let global = reminder::save_custom(&db, &CustomReminderInput {
+        title: "开播周年庆".into(), anchor_date: today.clone(), rule: "once".into(), ..Default::default()
+    }).unwrap();
+    assert!(global.uid.is_none());
+
+    let cfg = SettingsDto::default();
+    let q = ReminderQuery { days_ahead: Some(0), include_acked: Some(true), source: Some("custom".into()) };
+    let list = reminder::list(&db, &q, &cfg).unwrap();
+    assert_eq!(list.len(), 2, "两条自定义纪念日都应在今天出现");
+    let personal = list.iter().find(|r| r.custom_id == Some(saved.id)).unwrap();
+    assert_eq!(personal.reminder_type, format!("custom_{}", saved.id));
+    assert_eq!(personal.source, "custom");
+    assert!(personal.greeting.contains("小粉丝"));
+    let global_item = list.iter().find(|r| r.uid == GLOBAL_REMINDER_UID).unwrap();
+    assert!(global_item.greeting.contains("开播周年庆"));
+
+    let ack = ReminderAckInput {
+        uid: personal.uid.clone(), reminder_type: personal.reminder_type.clone(),
+        reminder_date: personal.reminder_date.clone(), acked: Some(true),
+    };
+    assert!(reminder::ack(&db, &ack, &cfg).unwrap().acked, "动态类型也必须能标记已处理");
+
+    let disabled = reminder::save_custom(&db, &CustomReminderInput {
+        id: Some(saved.id), title: saved.title.clone(), uid: saved.uid.clone(),
+        anchor_date: saved.anchor_date.clone(), rule: saved.rule.clone(),
+        enabled: Some(false), ..Default::default()
+    }).unwrap();
+    assert!(!disabled.enabled);
+    assert_eq!(reminder::list(&db, &q, &cfg).unwrap().len(), 1, "停用后不再生成提醒");
+
+    assert!(reminder::save_custom(&db, &CustomReminderInput {
+        title: "无效".into(), uid: Some("不存在的UID".into()),
+        anchor_date: today.clone(), rule: "annual".into(), ..Default::default()
+    }).is_err(), "绑定不存在的粉丝必须报错");
+    assert!(reminder::save_custom(&db, &CustomReminderInput {
+        title: "无效".into(), anchor_date: "不是日期".into(), rule: "annual".into(), ..Default::default()
+    }).is_err(), "非法日期必须报错");
+    assert!(reminder::save_custom(&db, &CustomReminderInput {
+        title: "无效".into(), anchor_date: today.clone(), rule: "weekly".into(), ..Default::default()
+    }).is_err(), "非法规则必须报错");
+
+    assert!(reminder::delete_custom(&db, saved.id).unwrap());
+    assert_eq!(reminder::list_custom(&db).unwrap().len(), 1);
+    let orphan_ack: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM reminder_ack WHERE reminder_type=?1", params![format!("custom_{}", saved.id)],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(orphan_ack, 0, "删除时须清理历史处理标记");
+}
+
+#[test]
+fn import_commit_creates_events_rejects_future_snapshot_and_warns_on_missing_columns() {
+    let (_tmp, state) = temp_state();
+    let csv = concat!(
+        "uid,nickname,guard_level,rank,unit_months,price_yuan,event_type,event_at\n",
+        "u-new,新舰长,3,1,1,198,purchase,2026-11-01\n",
+        "u-renew,续费提督,2,2,12,886,renew,2026-11-02\n",
+        "u-nolevel,等级未知的粉丝,未知,3,1,45,purchase,2026-11-03\n",
+    );
+    let args = crate::models::ImportArgs {
+        file_content: Some(csv.to_string()),
+        file_name: Some("events.csv".into()),
+        mapping: Some(crate::import::default_mapping()),
+        ..Default::default()
+    };
+    let result = crate::import::commit(&state, &args).unwrap();
+    assert_eq!(result.event_count, 3, "金额/月数有值即生成事件，与等级能否识别无关");
+    assert_eq!(result.new_count, 3);
+    assert_eq!(result.snapshot_date, crate::crypto::today());
+    assert!(result.warnings.is_empty());
+
+    let db = state.lock_db().unwrap();
+    let mut stmt = db.conn.prepare(
+        "SELECT uid, event_type, price_yuan, event_at FROM guard_event WHERE source='import' ORDER BY uid",
+    ).unwrap();
+    let events: Vec<(String, String, f64, String)> = stmt.query_map([], |r| Ok((
+        r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
+    ))).unwrap().map(|r| r.unwrap()).collect();
+    drop(stmt);
+    assert_eq!(events.len(), 3);
+    assert!(events.iter().any(|(uid, kind, _, _)| uid == "u-renew" && kind == "renew"),
+        "续费类型不得被硬编码成购买");
+    let new_event = events.iter().find(|(uid, ..)| uid == "u-new").unwrap();
+    assert!(new_event.3.starts_with("2026-11-01"), "event_at 应取购买日期而非导入时刻");
+    assert_eq!(crate::ledger::unlinked_event_count(&db).unwrap(), 3, "归集页面应能看到未归集事件");
+    assert_eq!(crate::ledger::sync_events(&db).unwrap(), 3, "三条事件都应可归集为收入");
+    assert_eq!(crate::ledger::sync_events(&db).unwrap(), 0, "重复归集必须幂等");
+    drop(db);
+
+    // 未来日期快照：明确拒绝并给出中文原因，不再静默回落或写坏当前名单
+    let future = (chrono::Local::now().date_naive() + chrono::Duration::days(1))
+        .format("%Y-%m-%d").to_string();
+    let bad = crate::models::ImportArgs {
+        file_content: Some(csv.to_string()),
+        mapping: Some(crate::import::default_mapping()),
+        snapshot_date: Some(future),
+        ..Default::default()
+    };
+    let err = crate::import::commit(&state, &bad).unwrap_err();
+    assert!(err.message.contains("晚于今天"), "应给出可读提示：{err}");
+
+    let invalid = crate::models::ImportArgs {
+        file_content: Some(csv.to_string()),
+        mapping: Some(crate::import::default_mapping()),
+        snapshot_date: Some("不是日期".into()),
+        ..Default::default()
+    };
+    assert!(crate::import::commit(&state, &invalid).is_err(), "非法日期格式必须拒绝");
+
+    // 金额 / 月数列未映射时给可见提示，避免「导入成功但归集始终 0 条」
+    let mut empty_map = crate::import::default_mapping();
+    empty_map.unit_months.clear();
+    empty_map.price_yuan.clear();
+    let no_events = crate::models::ImportArgs {
+        file_content: Some(csv.to_string()),
+        mapping: Some(empty_map),
+        ..Default::default()
+    };
+    let r2 = crate::import::commit(&state, &no_events).unwrap();
+    assert_eq!(r2.event_count, 0);
+    assert!(!r2.warnings.is_empty());
 }
 
 #[test]
@@ -99,6 +294,10 @@ fn gift_batch_reveal_requires_confirm_and_export_is_masked() {
     assert!(gifts::export_masked(&db, &state.data_dir, batch.id, None, false).is_err());
     let exported = gifts::export_masked(&db, &state.data_dir, batch.id, None, true).unwrap();
     assert!(exported.masked);
+    let backup_root = crate::settings::backup_root(&state.data_dir);
+    assert!(std::path::Path::new(&exported.path).starts_with(&backup_root), "F4 脱敏清单必须写入与 F6 相同的备份目录");
+    assert!(std::path::Path::new(&exported.path).file_name().unwrap().to_string_lossy().contains("-masked-"),
+        "文件名带时间戳，避免同批次重复导出互相覆盖");
     let text = std::fs::read_to_string(&exported.path).unwrap();
     assert!(!text.contains("世纪大道"), "脱敏导出不得含门牌号");
     assert!(!text.contains("13800006621"), "脱敏导出不得含电话");

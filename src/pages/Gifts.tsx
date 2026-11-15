@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Gift, Plus, PackageCheck, Truck, Eye, FileDown, ShieldCheck, UsersRound } from "lucide-react";
 import { Badge, Button, Card, EmptyState, Field, Modal, SectionHint, SelectField } from "@/components/ui";
 import { DataTable, type Column } from "@/components/DataTable";
-import { ADDRESS_STATUS_TEXT, callSafe, SHIPMENT_TEXT } from "@/lib/ipc";
+import { ADDRESS_STATUS_TEXT, callSafe, formatBytes, SHIPMENT_TEXT } from "@/lib/ipc";
 import { useApp } from "@/lib/appContext";
 import type {
-  AddressDto, AddressStatus, GiftBatchDto, GiftShipmentDto, GuardMemberDto,
+  AddressDto, AddressStatus, ExportResult, GiftBatchDto, GiftShipmentDto, GuardMemberDto,
   ShipmentStatus,
 } from "@/types/dto";
 
@@ -111,9 +111,9 @@ export default function Gifts() {
     title: "导出脱敏寄送清单",
     desc: "导出内容仅含 UID、昵称、等级、省市区掩码与物流单号，不含收件人、电话与门牌号。",
     action: async () => {
-      const { data, error } = await callSafe<{ path: string; sizeBytes: number }>("gift_batch_export", { batchId: selectedId, confirm: true });
+      const { data, error } = await callSafe<ExportResult>("gift_batch_export", { batchId: selectedId, confirm: true });
       if (error) { notify({ tone: "error", title: "导出失败", detail: error.action }); return; }
-      notify({ tone: "success", title: "脱敏清单已导出", detail: data?.path ?? "" });
+      notify({ tone: "success", title: "脱敏清单已导出", detail: `已保存到备份目录 · ${data?.path ?? ""} · ${formatBytes(data?.sizeBytes ?? 0)}` });
     },
   });
 

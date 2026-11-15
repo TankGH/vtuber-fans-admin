@@ -1,4 +1,5 @@
 use calamine::Reader;
+use chrono::TimeZone;
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -24,6 +25,8 @@ const HEADER_ALIASES: &[(&str, &[&str])] = &[
     ("note", &["note", "备注", "说明"]),
     ("unitMonths", &["unit_months", "月数", "购买月数", "guard_unit"]),
     ("priceYuan", &["price_yuan", "金额", "价格", "price"]),
+    ("eventType", &["event_type", "事件类型", "购买类型", "类型", "order_type"]),
+    ("eventAt", &["event_at", "购买日期", "购买时间", "事件时间", "下单时间"]),
 ];
 
 pub fn suggest_mapping(headers: &[String]) -> ImportMapping {
@@ -39,6 +42,8 @@ pub fn suggest_mapping(headers: &[String]) -> ImportMapping {
         "note" => mapping.note = value.to_string(),
         "unitMonths" => mapping.unit_months = value.to_string(),
         "priceYuan" => mapping.price_yuan = value.to_string(),
+        "eventType" => mapping.event_type = value.to_string(),
+        "eventAt" => mapping.event_at = value.to_string(),
         _ => {}
     };
     for (key, aliases) in HEADER_ALIASES {
@@ -55,6 +60,7 @@ pub fn default_mapping() -> ImportMapping {
         rank: "rank".into(), first_interaction_at: "first_interaction_at".into(),
         birthday: "birthday".into(), address: "address".into(), note: "note".into(),
         unit_months: "unit_months".into(), price_yuan: "price_yuan".into(),
+        event_type: "event_type".into(), event_at: "event_at".into(),
     }
 }
 
@@ -149,6 +155,25 @@ pub fn parse_level(raw: &str) -> Option<i32> {
     }
 }
 
+fn normalize_event_type(raw: &str) -> Option<String> {
+    match raw.trim().to_lowercase().as_str() {
+        "renew" | "续费" | "续舰" | "renewal" => Some("renew".to_string()),
+        "purchase" | "购买" | "新购" | "上舰" | "new" => Some("purchase".to_string()),
+        _ => None,
+    }
+}
+
+/// 把 YYYY-MM-DD 或 ISO 时间统一成 RFC3339，供 guard::add_months 计算有效期
+fn normalize_event_at(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() { return None; }
+    let head: String = s.chars().take(10).collect();
+    let date = chrono::NaiveDate::parse_from_str(&head, "%Y-%m-%d").ok()?;
+    let local = chrono::Local::now().timezone()
+        .from_local_datetime(&date.and_hms_opt(0, 0, 0)?).single()?;
+    Some(local.to_rfc3339())
+}
+
 pub fn build_rows(
     headers: &[String], records: &[Vec<String>], mapping: &ImportMapping,
 ) -> Vec<ParsedRow> {
@@ -164,6 +189,8 @@ pub fn build_rows(
         note: get_cell(headers, rec, &mapping.note),
         unit_months: get_cell(headers, rec, &mapping.unit_months).parse::<i32>().ok(),
         price_yuan: get_cell(headers, rec, &mapping.price_yuan).parse::<f64>().ok(),
+        event_type: normalize_event_type(&get_cell(headers, rec, &mapping.event_type)),
+        event_at: normalize_event_at(&get_cell(headers, rec, &mapping.event_at)),
     }).collect()
 }
 
@@ -244,9 +271,27 @@ pub fn commit(state: &AppState, args: &ImportArgs) -> AppResult<ImportResult> {
     let mut db = state.lock_db()?;
     let crypto = db.crypto.clone();
     let tx = db.conn.transaction()?;
-    let snapshot_date = args.snapshot_date.clone()
-        .filter(|s| !s.is_empty()).unwrap_or_else(today);
+    let today_s = today();
+    // 快照日期必须显式校验：过去可以补录，未来日期一律拒绝，避免把未来名单
+    // 当成「当前在舰名单」静默写库（P2）。
+    let snapshot_date = match args.snapshot_date.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => {
+            let parsed = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+                .map_err(|_| AppError::invalid("快照日期格式应为 YYYY-MM-DD"))?;
+            if parsed > chrono::Local::now().date_naive() {
+                return Err(AppError::invalid(format!(
+                    "快照日期 {raw} 晚于今天（{today_s}），已取消导入；未来日期的名单不应作为当前在舰快照。"
+                )));
+            }
+            parsed.format("%Y-%m-%d").to_string()
+        }
+        None => today_s.clone(),
+    };
     let fetched_at = now_iso();
+    let mut warnings = Vec::new();
+    if mapping.unit_months.is_empty() && mapping.price_yuan.is_empty() {
+        warnings.push("金额与购买月数列均未映射，本次不会生成收入事件；如需在记账本归集，请在「字段映射」里指定这两列。".to_string());
+    }
     tx.execute(
         "INSERT OR IGNORE INTO guard_snapshot(snapshot_date, room_id, fetched_at, source) VALUES (?1,'',?2,'import')",
         params![snapshot_date, fetched_at],
@@ -257,6 +302,7 @@ pub fn commit(state: &AppState, args: &ImportArgs) -> AppResult<ImportResult> {
     let mut new_count = 0usize;
     let mut merge_count = 0usize;
     let mut skipped = 0usize;
+    let mut event_count = 0usize;
     let mut errors = Vec::new();
     for (r, rec) in rows.iter().zip(records.iter()) {
         if r.uid.is_empty() || r.nickname.is_empty() {
@@ -274,15 +320,23 @@ pub fn commit(state: &AppState, args: &ImportArgs) -> AppResult<ImportResult> {
                    nickname=excluded.nickname, guard_level=excluded.guard_level, rank=excluded.rank",
                 params![snapshot_id, r.uid, r.nickname, level, r.rank],
             )?;
-            if r.unit_months.is_some() || r.price_yuan.is_some() {
-                tx.execute(
-                    "INSERT INTO guard_event(uid, nickname, event_type, guard_level, unit_months,
-                     price_yuan, event_at, source, raw_json) VALUES (?1,?2,'purchase',?3,?4,?5,?6,'import',?7)",
-                    params![r.uid, r.nickname, level, r.unit_months, r.price_yuan, fetched_at,
-                        serde_json::to_string(rec).unwrap_or_default()],
-                )?;
-            }
         }
+        // 事件写入与「等级可识别」解耦：只要金额或月数任一有值就生成购买 / 续费事件，
+        // 否则记账本永远看不到可归集事件（P2）。
+        if r.unit_months.is_some() || r.price_yuan.is_some() {
+            let kind = r.event_type.clone().unwrap_or_else(|| "purchase".to_string());
+            let at = r.event_at.clone().unwrap_or_else(|| fetched_at.clone());
+            tx.execute(
+                "INSERT INTO guard_event(uid, nickname, event_type, guard_level, unit_months,
+                 price_yuan, event_at, source, raw_json) VALUES (?1,?2,?3,?4,?5,?6,?7,'import',?8)",
+                params![r.uid, r.nickname, kind, r.guard_level, r.unit_months, r.price_yuan, at,
+                    serde_json::to_string(rec).unwrap_or_default()],
+            )?;
+            event_count += 1;
+        }
+    }
+    if event_count == 0 && warnings.is_empty() {
+        warnings.push("未识别到金额或购买月数，本次没有生成收入事件；请检查这两列的数据是否为纯数字。".to_string());
     }
     let file_name = args.file_name.clone().unwrap_or_else(|| "名单.csv".to_string());
     let file_type = if file_name.to_lowercase().ends_with(".xlsx") { "xlsx" } else { "csv" };
@@ -297,7 +351,7 @@ pub fn commit(state: &AppState, args: &ImportArgs) -> AppResult<ImportResult> {
     tx.commit()?;
     Ok(ImportResult {
         batch_id, total_rows: rows.len(), new_count, merge_count,
-        skipped_count: skipped, errors, created_at,
+        skipped_count: skipped, event_count, snapshot_date, warnings, errors, created_at,
     })
 }
 

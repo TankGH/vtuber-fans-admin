@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "守村人·粉丝档案",
         "width": 1440,
         "height": 900,

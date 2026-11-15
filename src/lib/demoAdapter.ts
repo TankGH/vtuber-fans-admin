@@ -2,6 +2,8 @@ import type {
   AddressDto,
   BackupDto,
   BootstrapDto,
+  CustomReminderDto,
+  CustomReminderInput,
   ExportResult,
   FanProfileDto,
   FanProfileInput,
@@ -38,6 +40,7 @@ import {
   DEFAULT_SETTINGS,
   seedActivities,
   seedBackups,
+  seedCustomReminders,
   seedEvents,
   seedGiftBatches,
   seedGiftShipments,
@@ -48,7 +51,7 @@ import {
   seedSnapshots,
   seedSyncStatus,
 } from "@/lib/demoData";
-import { buildPreview, buildRows, earliestInteraction } from "@/lib/importLogic";
+import { buildPreview, buildRows, earliestInteraction, getCell, parseDelimited } from "@/lib/importLogic";
 
 const STORAGE_KEY = "vtuber-fans-admin.demo.v1";
 
@@ -67,6 +70,8 @@ interface DemoState {
   importContent: string;
   nextImportBatchId: number;
   reminders: ReminderDto[];
+  customReminders: CustomReminderDto[];
+  nextCustomReminderId: number;
   giftBatches: GiftBatchDto[];
   giftShipments: GiftShipmentDto[];
   ledgerEntries: LedgerEntryDto[];
@@ -94,6 +99,8 @@ function initialState(): DemoState {
     importContent: "",
     nextImportBatchId: 7,
     reminders: seedReminders(),
+    customReminders: seedCustomReminders(),
+    nextCustomReminderId: 3,
     giftBatches: seedGiftBatches(),
     giftShipments: seedGiftShipments(),
     ledgerEntries: seedLedgerEntries(),
@@ -140,6 +147,66 @@ function save(state: DemoState): void {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function resolveSnapshotDate(raw?: string): string {
+  const today = isoDate(new Date());
+  const value = raw?.trim() || today;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw { code: "E_INVALID_INPUT", message: "快照日期格式应为 YYYY-MM-DD" };
+  }
+  if (value > today) {
+    throw { code: "E_INVALID_INPUT", message: `快照日期 ${value} 晚于今天（${today}），已取消导入；未来日期的名单不应作为当前在舰快照。` };
+  }
+  return value;
+}
+
+function customOccurrence(item: CustomReminderDto): { date: string; daysAhead: number } | null {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const anchor = new Date(`${item.anchorDate}T00:00:00`);
+  if (Number.isNaN(anchor.getTime())) return null;
+  let target: Date;
+  if (item.rule === "annual") {
+    target = new Date(today.getFullYear(), anchor.getMonth(), anchor.getDate());
+    if (target.getTime() < today.getTime()) {
+      target = new Date(today.getFullYear() + 1, anchor.getMonth(), anchor.getDate());
+    }
+  } else {
+    target = new Date(anchor);
+    if (item.rule === "days") target.setDate(target.getDate() + item.offsetDays);
+  }
+  const daysAhead = Math.round((target.getTime() - today.getTime()) / 86_400_000);
+  return daysAhead < 0 ? null : { date: isoDate(target), daysAhead };
+}
+
+function rebuildCustomReminder(state: DemoState, item: CustomReminderDto): void {
+  const type = `custom_${item.id}`;
+  state.reminders = state.reminders.filter((r) => r.reminderType !== type);
+  if (!item.enabled) return;
+  const occ = customOccurrence(item);
+  if (!occ) return;
+  const nickname = item.nickname ?? "全体";
+  state.reminders.push({
+    uid: item.uid ?? "__global__",
+    nickname,
+    reminderType: type,
+    reminderLabel: item.title,
+    reminderDate: occ.date,
+    daysAhead: occ.daysAhead,
+    acked: false,
+    ackedAt: null,
+    greeting: item.uid
+      ? `${nickname}，${item.title}快乐！感谢一路相伴。`
+      : `「${item.title}」到了，记得准备一下～`,
+    source: "custom",
+    customId: item.id,
+    milestone: item.rule === "days" ? `${item.offsetDays} 天` : item.rule === "annual" ? "每年" : null,
+  });
 }
 
 function logActivity(state: DemoState, kind: string, summary: string): void {
@@ -353,6 +420,7 @@ const handlers: Record<string, Handler> = {
     const args = a as unknown as ImportParseArgs;
     const content = args.fileContent || "";
     if (!content.trim()) throw { code: "E_IMPORT_FORMAT", message: "文件内容为空或格式无法识别" };
+    resolveSnapshotDate(args.snapshotDate);
     const state = load();
     const preview = buildPreview(content, args.mapping, state.profiles);
     state.importContent = content;
@@ -363,11 +431,19 @@ const handlers: Record<string, Handler> = {
     const args = a as unknown as ImportCommitArgs;
     const state = load();
     const content = args.fileContent || state.importContent;
+    const snapshotDate = resolveSnapshotDate(args.snapshotDate);
     const preview = buildPreview(content, args.mapping, state.profiles) as ImportPreview;
     const { rows } = buildRows(content, args.mapping);
+    const { headers, records } = parseDelimited(content);
+    const mapping = args.mapping;
+    const warnings: string[] = [];
+    if (!mapping.unitMonths && !mapping.priceYuan) {
+      warnings.push("金额与购买月数列均未映射，本次不会生成收入事件；如需在记账本归集，请在「字段映射」里指定这两列。");
+    }
     let newCount = 0;
     let mergeCount = 0;
-    rows.forEach((r) => {
+    let eventCount = 0;
+    rows.forEach((r, i) => {
       if (!r.uid || !r.nickname) return;
       const idx = state.profiles.findIndex((p) => p.uid === r.uid);
       if (idx < 0) {
@@ -392,15 +468,42 @@ const handlers: Record<string, Handler> = {
       if (r.guardLevel) {
         const gi = state.guardMembers.findIndex((g) => g.uid === r.uid);
         if (gi >= 0) state.guardMembers[gi] = { ...state.guardMembers[gi], nickname: r.nickname, guardLevel: r.guardLevel, rank: r.rank };
-        else state.guardMembers.push({ uid: r.uid, nickname: r.nickname, guardLevel: r.guardLevel, rank: r.rank, validUntil: null, status: "active", snapshotDate: args.snapshotDate ?? null });
+        else state.guardMembers.push({ uid: r.uid, nickname: r.nickname, guardLevel: r.guardLevel, rank: r.rank, validUntil: null, status: "active", snapshotDate });
+      }
+      // 与 Rust 侧一致：金额或月数任一有值就生成购买 / 续费事件，供记账本归集
+      const rec = records[i] ?? [];
+      const unitMonths = Number.parseInt(getCell(rec, headers, mapping.unitMonths), 10);
+      const priceYuan = Number.parseFloat(getCell(rec, headers, mapping.priceYuan));
+      if (Number.isFinite(unitMonths) || Number.isFinite(priceYuan)) {
+        const typeRaw = getCell(rec, headers, mapping.eventType).trim().toLowerCase();
+        const isRenew = ["renew", "续费", "续舰", "renewal"].includes(typeRaw);
+        const atRaw = getCell(rec, headers, mapping.eventAt).trim();
+        state.events.push({
+          id: state.events.length + 1,
+          uid: r.uid,
+          nickname: r.nickname,
+          eventType: isRenew ? "renew" : "purchase",
+          guardLevel: r.guardLevel,
+          unitMonths: Number.isFinite(unitMonths) ? unitMonths : null,
+          priceYuan: Number.isFinite(priceYuan) ? priceYuan : null,
+          eventAt: /^\d{4}-\d{2}-\d{2}/.test(atRaw) ? atRaw.slice(0, 10) : snapshotDate,
+          source: "import",
+        });
+        eventCount += 1;
       }
     });
+    if (eventCount === 0 && warnings.length === 0) {
+      warnings.push("未识别到金额或购买月数，本次没有生成收入事件；请检查这两列的数据是否为纯数字。");
+    }
     const result: ImportResult = {
       batchId: state.nextImportBatchId++,
       totalRows: preview.totalRows,
       newCount,
       mergeCount,
       skippedCount: preview.invalidCount,
+      eventCount,
+      snapshotDate,
+      warnings,
       errors: preview.conflicts.map((c) => `第 ${c.row} 行：${c.reason}`),
       createdAt: now(),
     };
@@ -451,7 +554,51 @@ const handlers: Record<string, Handler> = {
     const q = a as unknown as ReminderQuery;
     const days = q.daysAhead ?? 3;
     const include = q.includeAcked ?? true;
-    return load().reminders.filter((r) => r.daysAhead <= days && (include || !r.acked));
+    return load().reminders.filter((r) => r.daysAhead <= days && (include || !r.acked) && (!q.source || r.source === q.source));
+  },
+  custom_reminder_list: () => load().customReminders,
+  custom_reminder_save: (a) => {
+    const state = load();
+    const input = (a as { input?: CustomReminderInput }).input;
+    if (!input) throw { code: "E_INVALID", message: "缺少纪念日内容" };
+    const title = input.title.trim();
+    if (!title || title.length > 60) throw { code: "E_INVALID", message: "纪念日名称需为 1–60 个字符" };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.anchorDate)) throw { code: "E_INVALID", message: "起算日期格式应为 YYYY-MM-DD" };
+    const uid = input.uid?.trim() || null;
+    if (uid && !state.profiles.some((p) => p.uid === uid)) {
+      throw { code: "E_INVALID", message: "绑定的粉丝 UID 不存在，请先在档案中创建" };
+    }
+    const id = input.id ?? state.nextCustomReminderId++;
+    const existing = state.customReminders.find((c) => c.id === id);
+    const offset = input.rule === "days" ? (input.offsetDays ?? 100) : 0;
+    if (input.rule === "days" && (offset < 1 || offset > 36500)) {
+      throw { code: "E_INVALID", message: "累计天数需在 1–36500 之间" };
+    }
+    const item: CustomReminderDto = {
+      id, title, uid,
+      nickname: uid ? state.profiles.find((p) => p.uid === uid)?.currentNickname ?? null : null,
+      anchorDate: input.anchorDate,
+      rule: input.rule,
+      offsetDays: offset,
+      note: input.note ?? "",
+      enabled: input.enabled ?? true,
+      createdAt: existing?.createdAt ?? now(),
+    };
+    state.customReminders = [item, ...state.customReminders.filter((c) => c.id !== id)];
+    rebuildCustomReminder(state, item);
+    logActivity(state, "reminder", `${existing ? "编辑" : "新增"}自定义纪念日「${title}」`);
+    save(state);
+    return item;
+  },
+  custom_reminder_delete: (a) => {
+    const state = load();
+    const id = (a as { id: number }).id;
+    const existed = state.customReminders.some((c) => c.id === id);
+    state.customReminders = state.customReminders.filter((c) => c.id !== id);
+    state.reminders = state.reminders.filter((r) => r.reminderType !== `custom_${id}`);
+    if (existed) logActivity(state, "reminder", `删除自定义纪念日 #${id}`);
+    save(state);
+    return existed;
   },
   reminder_ack: (a) => {
     const input = a as unknown as ReminderAckInput;
@@ -533,7 +680,10 @@ const handlers: Record<string, Handler> = {
   },
   gift_batch_export: (a) => {
     if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "导出寄送清单需要二次确认" };
-    return { path: `gift-batch-${a.batchId}-masked.csv`, sizeBytes: 2048, masked: true } as ExportResult;
+    const state = load();
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    const path = `${state.settings.backupDir}\\gift-batch-${a.batchId}-masked-${stamp}.csv`;
+    return { path, sizeBytes: 2048, masked: true } as ExportResult;
   },
 
   // ---- F5 主播记账本 ----

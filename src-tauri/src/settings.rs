@@ -26,6 +26,8 @@ impl Default for SettingsDto {
             sync_enabled: false,
             room_id: String::new(),
             reminder_days_ahead: 3,
+            milestone_hundreds_enabled: true,
+            milestone_years_enabled: true,
         }
     }
 }
@@ -59,6 +61,13 @@ pub fn load(data_dir: &Path) -> SettingsDto {
                 if let Some(v) = parsed.get("snapshotHour").and_then(|v| v.as_i64()) { cfg.snapshot_hour = v as i32; }
                 if let Some(v) = parsed.get("websocketEnabled").and_then(|v| v.as_bool()) { cfg.websocket_enabled = v; }
                 if let Some(v) = parsed.get("reminderDaysAhead").and_then(|v| v.as_i64()) { cfg.reminder_days_ahead = v as i32; }
+                // v0.2 早期版本用 milestoneDays 数组配置天数节点；升级后统一为两个独立开关
+                if let Some(v) = parsed.get("milestoneHundredsEnabled").and_then(|v| v.as_bool()) {
+                    cfg.milestone_hundreds_enabled = v;
+                } else if let Some(arr) = parsed.get("milestoneDays").and_then(|v| v.as_array()) {
+                    cfg.milestone_hundreds_enabled = !arr.is_empty();
+                }
+                if let Some(v) = parsed.get("milestoneYearsEnabled").and_then(|v| v.as_bool()) { cfg.milestone_years_enabled = v; }
             }
         }
     }
@@ -81,6 +90,8 @@ pub fn save(data_dir: &Path, cfg: &SettingsDto) -> AppResult<()> {
         "syncEnabled": cfg.sync_enabled,
         "roomId": cfg.room_id,
         "reminderDaysAhead": cfg.reminder_days_ahead,
+        "milestoneHundredsEnabled": cfg.milestone_hundreds_enabled,
+        "milestoneYearsEnabled": cfg.milestone_years_enabled,
     });
     std::fs::write(path(data_dir), serde_json::to_string_pretty(&body)?)
         .map_err(|e| AppError::new("E_BACKUP_DIR", format!("配置写入失败：{e}")))?;
@@ -122,6 +133,8 @@ pub fn update(data_dir: &Path, input: SettingsInput) -> AppResult<SettingsDto> {
         if !(0..=14).contains(&v) { return Err(AppError::invalid("提醒提前天数需在 0–14 之间")); }
         cfg.reminder_days_ahead = v;
     }
+    if let Some(v) = input.milestone_hundreds_enabled { cfg.milestone_hundreds_enabled = v; }
+    if let Some(v) = input.milestone_years_enabled { cfg.milestone_years_enabled = v; }
     save(data_dir, &cfg)?;
     Ok(cfg)
 }

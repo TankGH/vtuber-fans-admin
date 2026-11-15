@@ -36,6 +36,10 @@ struct SettingsArgs { input: Option<SettingsInput> }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
+struct CustomReminderArgs { input: Option<CustomReminderInput> }
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 struct BackupIdArgs { backup_id: String, confirm: Option<bool> }
 
 #[derive(Debug, Deserialize, Default)]
@@ -201,15 +205,40 @@ pub fn open_data_dir(state: State<'_, AppState>, payload: Value) -> AppResult<()
 #[tauri::command]
 pub fn reminder_list(state: State<'_, AppState>, payload: Value) -> AppResult<Vec<ReminderDto>> {
     let q: ReminderQuery = args(&payload)?;
+    let cfg = settings::load(&state.data_dir);
     let db = state.lock_db()?;
-    reminder::list(&db, &q)
+    reminder::list(&db, &q, &cfg)
 }
 
 #[tauri::command]
 pub fn reminder_ack(state: State<'_, AppState>, payload: Value) -> AppResult<ReminderDto> {
     let input: ReminderAckInput = args(&payload)?;
+    let cfg = settings::load(&state.data_dir);
     let db = state.lock_db()?;
-    reminder::ack(&db, &input)
+    reminder::ack(&db, &input, &cfg)
+}
+
+#[tauri::command]
+pub fn custom_reminder_list(state: State<'_, AppState>, payload: Value) -> AppResult<Vec<CustomReminderDto>> {
+    let _ = payload;
+    let db = state.lock_db()?;
+    reminder::list_custom(&db)
+}
+
+#[tauri::command]
+pub fn custom_reminder_save(state: State<'_, AppState>, payload: Value) -> AppResult<CustomReminderDto> {
+    let a: CustomReminderArgs = args(&payload)?;
+    let input = a.input.ok_or_else(|| AppError::invalid("缺少纪念日内容"))?;
+    let db = state.lock_db()?;
+    reminder::save_custom(&db, &input)
+}
+
+/// 删除需要前端二次确认；同时清理该纪念日的历史处理标记
+#[tauri::command]
+pub fn custom_reminder_delete(state: State<'_, AppState>, payload: Value) -> AppResult<bool> {
+    let a: IdArgs = args(&payload)?;
+    let db = state.lock_db()?;
+    reminder::delete_custom(&db, a.id)
 }
 
 /// 每日最多一次 Windows 原生 Toast；是否发送由 app_meta 中的日期标记决定
@@ -219,7 +248,7 @@ pub fn reminder_notify(app: tauri::AppHandle, state: State<'_, AppState>, payloa
     let _ = payload;
     let db = state.lock_db()?;
     let cfg = settings::load(&state.data_dir);
-    let count = reminder::pending_count(&db, cfg.reminder_days_ahead)?;
+    let count = reminder::pending_count(&db, cfg.reminder_days_ahead, &cfg)?;
     if count == 0 || !reminder::should_toast(&db)? { return Ok(false); }
     app.notification().builder()
         .title("守村人·粉丝档案 · 纪念日提醒")

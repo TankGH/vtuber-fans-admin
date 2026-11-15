@@ -126,6 +126,13 @@ export interface ImportMapping {
   birthday: string;
   address: string;
   note: string;
+  /** 购买月数；与金额任一存在即生成一条大航海事件，供记账本归集 */
+  unitMonths: string;
+  priceYuan: string;
+  /** 事件类型（purchase / renew），留空按购买处理 */
+  eventType: string;
+  /** 购买 / 续费发生日期，留空按导入时刻处理 */
+  eventAt: string;
 }
 
 export interface FieldConflict {
@@ -163,6 +170,12 @@ export interface ImportResult {
   newCount: number;
   mergeCount: number;
   skippedCount: number;
+  /** 本次导入生成的大航海购买 / 续费事件数 */
+  eventCount: number;
+  /** 实际采用的快照日期（YYYY-MM-DD） */
+  snapshotDate: string;
+  /** 非致命提示，例如「金额 / 月数未映射，未生成收入事件」 */
+  warnings: string[];
   errors: string[];
   createdAt: string;
 }
@@ -193,6 +206,10 @@ export interface SettingsDto {
   syncEnabled: boolean;
   roomId: string;
   reminderDaysAhead: number;
+  /** 百日提醒：100×n 天，n 为正整数 */
+  milestoneHundredsEnabled: boolean;
+  /** 周年提醒：n 周年，n 为正整数 */
+  milestoneYearsEnabled: boolean;
 }
 
 export interface SettingsInput {
@@ -205,6 +222,8 @@ export interface SettingsInput {
   roomId?: string;
   snapshotHour?: number;
   reminderDaysAhead?: number;
+  milestoneHundredsEnabled?: boolean;
+  milestoneYearsEnabled?: boolean;
 }
 
 export interface ActivityDto {
@@ -269,7 +288,16 @@ export interface ImportCommitArgs extends ImportParseArgs {
 
 // ---- F3 纪念日提醒 ----
 
-export type ReminderType = "birthday" | "guard_anniversary" | "watch_anniversary";
+// 类型标识含动态部分：guard_days_100 / guard_years_3 / custom_12
+export type ReminderType = string;
+
+export type ReminderRule = "annual" | "days" | "once";
+
+export const CUSTOM_REMINDER_RULES: Array<{ value: ReminderRule; label: string; hint: string }> = [
+  { value: "annual", label: "每年重复", hint: "按起算日期的月日，每年循环提醒" },
+  { value: "days", label: "起算后第 N 天", hint: "一次性，例如上舰 100 天、相识 500 天" },
+  { value: "once", label: "仅指定日期一次", hint: "一次性，过期后不再出现" },
+];
 
 export interface ReminderDto {
   uid: string;
@@ -281,11 +309,39 @@ export interface ReminderDto {
   acked: boolean;
   ackedAt: string | null;
   greeting: string;
+  source: "auto" | "custom";
+  customId: number | null;
+  milestone: string | null;
+}
+
+export interface CustomReminderDto {
+  id: number;
+  title: string;
+  uid: string | null;
+  nickname: string | null;
+  anchorDate: string;
+  rule: ReminderRule;
+  offsetDays: number;
+  note: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface CustomReminderInput {
+  id?: number;
+  title: string;
+  uid?: string | null;
+  anchorDate: string;
+  rule: ReminderRule;
+  offsetDays?: number;
+  note?: string;
+  enabled?: boolean;
 }
 
 export interface ReminderQuery {
   daysAhead?: number;
   includeAcked?: boolean;
+  source?: "auto" | "custom";
 }
 
 export interface ReminderAckInput {

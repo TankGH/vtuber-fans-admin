@@ -18,7 +18,9 @@
 | F2 | L3 手动补录（CSV / Excel） | ✅ 实现 | `import.rs` + 导入向导 |
 | F2 | 快照 diff / 有效期核算 / 疑似到期 | ✅ 数据层 | `guard.rs` 查询与核算；写入来自导入 |
 | F2 | 失败降级、状态栏文案 | ✅ 基础框架 | `error.rs` 错误码 + 前端状态栏 |
-| F3 纪念日提醒 | 汇总卡片 / Toast / 快捷操作 / 顶栏角标 | ✅ 实现 | `reminder_ack` 表 + `reminder.rs` + `Reminders.tsx` + 原生 Toast |
+| F3 纪念日提醒 | 汇总卡片 / Toast / 快捷操作 / 顶栏角标 / 来源筛选 | ✅ 实现 | `reminder_ack` + `custom_reminder` 表 + `reminder.rs` + `Reminders.tsx` + 原生 Toast |
+| F3 上舰里程碑 | N 周年（1 年、2 年…）与可配置天数节点（默认 100 天） | ✅ 实现 | 起算日取上舰日期 / 首次互动 / 最早购买事件；天数节点一次性、N 周年年度循环；规则存 `settings.json` 的 `milestoneDays` / `milestoneYearsEnabled` |
+| F3 自定义纪念日 | 新增 / 编辑 / 停用 / 删除（二次确认），可绑定粉丝或设为全局 | ✅ 实现 | `custom_reminder` 表三种规则（annual / days / once）；动态提醒类型 `custom_{id}`；删除时清理历史处理标记 |
 | F4 舰礼寄送 | 地址审核 / 寄送批次 / 发货状态 / 隐私导出 | ✅ 实现 | `gift_batch` / `gift_shipment` 表 + `gifts.rs` + `Gifts.tsx` |
 | F5 记账本 | 收入归集 / 支出 / 趋势图 / 批次成本 | ✅ 实现 | `ledger_entry` 表 + `ledger.rs` + `Ledger.tsx`（recharts 按需加载） |
 | F6 备份恢复 | 启动自动备份、7 份滚动 | ✅ 实现 | `backup.rs` + `manifest.json` |

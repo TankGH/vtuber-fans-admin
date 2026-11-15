@@ -23,6 +23,15 @@ use db::AppState;
 
 pub fn run() {
     tauri::Builder::default()
+        // 必须最先注册：第二个实例启动时会直接退出，并把已有主窗口唤起，
+        // 从而根治「安装完自动运行 + 手动再启动」造成的双进程双窗口（P3）。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
@@ -93,6 +102,9 @@ pub fn run() {
             commands::reminder_list,
             commands::reminder_ack,
             commands::reminder_notify,
+            commands::custom_reminder_list,
+            commands::custom_reminder_save,
+            commands::custom_reminder_delete,
             commands::gift_batch_list,
             commands::gift_batch_create,
             commands::gift_shipment_list,

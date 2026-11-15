@@ -297,6 +297,7 @@ pub fn apply_snapshot(db: &Db, room_id: &str, members: &[GuardMember], source: &
             guard_level: Some(m.guard_level), rank: m.rank,
             first_interaction_at: String::new(), birthday: String::new(), address: String::new(),
             note: String::new(), unit_months: None, price_yuan: None,
+            event_type: None, event_at: None,
         };
         if profile::upsert_from_import(&tx, &crypto, &row)? { new_count += 1; } else { merge_count += 1; }
     }

@@ -153,6 +153,10 @@ pub struct ImportMapping {
     pub note: String,
     pub unit_months: String,
     pub price_yuan: String,
+    /// 事件类型列（purchase / renew / 购买 / 续费）
+    pub event_type: String,
+    /// 购买 / 续费发生日期列
+    pub event_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -198,6 +202,12 @@ pub struct ImportResult {
     pub new_count: usize,
     pub merge_count: usize,
     pub skipped_count: usize,
+    /// 本次生成的大航海购买 / 续费事件数（供记账本归集）
+    pub event_count: usize,
+    /// 实际采用的快照日期
+    pub snapshot_date: String,
+    /// 非致命提示，例如金额 / 月数列未映射
+    pub warnings: Vec<String>,
     pub errors: Vec<String>,
     pub created_at: String,
 }
@@ -233,6 +243,10 @@ pub struct SettingsDto {
     pub sync_enabled: bool,
     pub room_id: String,
     pub reminder_days_ahead: i32,
+    /// 百日提醒：按 100×n 天自动生成（n 为正整数），可独立开关
+    pub milestone_hundreds_enabled: bool,
+    /// 周年提醒：按 n 周年自动生成（n 为正整数），可独立开关
+    pub milestone_years_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -247,6 +261,8 @@ pub struct SettingsInput {
     pub room_id: Option<String>,
     pub snapshot_hour: Option<i32>,
     pub reminder_days_ahead: Option<i32>,
+    pub milestone_hundreds_enabled: Option<bool>,
+    pub milestone_years_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -326,6 +342,10 @@ pub struct ParsedRow {
     pub note: String,
     pub unit_months: Option<i32>,
     pub price_yuan: Option<f64>,
+    /// 归一化后的事件类型：purchase / renew
+    pub event_type: Option<String>,
+    /// 购买 / 续费日期（YYYY-MM-DD）或完整 ISO 时间
+    pub event_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -338,6 +358,21 @@ pub struct BackupManifest {
 // ---- F3 纪念日提醒 ----
 
 pub const REMINDER_TYPES: &[&str] = &["birthday", "guard_anniversary", "watch_anniversary"];
+pub const CUSTOM_REMINDER_RULES: &[&str] = &["annual", "days", "once"];
+/// 全局纪念日没有 UID，用固定哨兵值参与 reminder_ack 主键
+pub const GLOBAL_REMINDER_UID: &str = "__global__";
+
+/// 动态类型 guard_days_{n} / custom_{id} 同样合法；ack 时用此函数校验而非固定枚举
+pub fn valid_reminder_type(kind: &str) -> bool {
+    if REMINDER_TYPES.contains(&kind) { return true; }
+    if let Some(n) = kind.strip_prefix("guard_days_") {
+        return !n.is_empty() && n.parse::<u32>().is_ok();
+    }
+    if let Some(id) = kind.strip_prefix("custom_") {
+        return !id.is_empty() && id.parse::<i64>().is_ok();
+    }
+    false
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -352,8 +387,42 @@ pub struct ReminderDto {
     pub days_ahead: i32,
     pub acked: bool,
     pub acked_at: Option<String>,
-    /// 预设祝福话术，只含昵称与纪念日类型，不含生日年份或地址
+    /// 预设祝福话术，只含昵称与纪念日名称，不含生日年份或地址
     pub greeting: String,
+    /// auto = 由档案自动生成，custom = 用户自建
+    pub source: String,
+    pub custom_id: Option<i64>,
+    /// 里程碑描述，如「100 天」「3 周年」
+    pub milestone: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomReminderDto {
+    pub id: i64,
+    pub title: String,
+    pub uid: Option<String>,
+    pub nickname: Option<String>,
+    pub anchor_date: String,
+    /// annual = 每年同月日；days = 起算后第 N 天（一次性）；once = 指定日期（一次性）
+    pub rule: String,
+    pub offset_days: i32,
+    pub note: String,
+    pub enabled: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CustomReminderInput {
+    pub id: Option<i64>,
+    pub title: String,
+    pub uid: Option<String>,
+    pub anchor_date: String,
+    pub rule: String,
+    pub offset_days: Option<i32>,
+    pub note: String,
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -361,6 +430,8 @@ pub struct ReminderDto {
 pub struct ReminderQuery {
     pub days_ahead: Option<i32>,
     pub include_acked: Option<bool>,
+    /// 只返回指定来源：auto / custom
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

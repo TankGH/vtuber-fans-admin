@@ -92,7 +92,7 @@ pub fn bootstrap(state: &AppState) -> AppResult<BootstrapDto> {
     let sync_status = crate::sync::status_from_state(state)?;
     let reminder_days = cfg.reminder_days_ahead;
     let db = state.lock_db()?;
-    let reminder_count = crate::reminder::pending_count(&db, reminder_days)?;
+    let reminder_count = crate::reminder::pending_count(&db, reminder_days, &cfg)?;
     let fan_count = count(&db.conn, "fan_profile")?;
     let snapshot_count = count(&db.conn, "guard_snapshot")?;
     let guard_count: usize = db

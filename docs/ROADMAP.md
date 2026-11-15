@@ -10,6 +10,7 @@
 | 大航海网页端 HTTP 快照（L1） | ✅ | `sync/bilibili.rs` 实现 `SyncSource` → `BiliSource`；WBI 签名、分页参数、名单解析；`sync::apply_snapshot` 写入 `guard_snapshot` / `guard_snapshot_member`，`snapshot_date` 唯一约束防重复；复用 `profile::upsert_from_import` 合并状态机 |
 | 登录凭证与扫码（F7 联动） | ✅ | 二维码由 `qrcode` crate 在本机生成 SVG；扫码轮询在 `spawn_blocking` 中执行；`SESSDATA` / `bili_jct` 等凭证经 `crypto.rs` 加密写入 `bili_session.enc`；登录态失效标 `expired` 并引导重新扫码；设置页开关默认关闭且开启需二次确认 |
 | 纪念日全局提醒（F3） | ✅ | `reminder.rs` 按年度循环计算未来 N 天节点（平年 2 月 29 日按 2 月 28 日）、`reminder_ack` 按 UID+类型+日期去重；汇总卡片、Windows 原生 Toast（每日一次）、顶栏角标、祝福话术复制；文案不含年份与地址 |
+| 上舰里程碑与自定义纪念日（F3） | ✅ | 起算日生成上舰 N 周年（自动延伸）与可配置天数节点（默认 100 天）；`custom_reminder` 表支持 annual / days / once 三种规则、绑定粉丝或全局、停用与二次确认删除；动态提醒类型均可标记已处理；来源筛选与规则配置在 `Reminders.tsx` |
 | 舰礼寄送台账（F4） | ✅ | `gifts.rs`：批次创建、地址审核流转、逐条发货状态与快递单号、完整地址二次确认（电话打码）、脱敏清单导出；地址状态同步回粉丝档案 |
 | 主播记账本（F5） | ✅ | `ledger.rs`：手动收支、`guard_event` 按事件 ID 幂等归集、月度趋势图（recharts 独立分块 + 按需加载）、支出关联寄送批次 |
 | 每日调度与失败降级 | ✅ | 后台线程每 5 分钟检查本地配置，仅在启用 + 到点 + 当天未尝试时执行一次；错误写入界面状态并提示重新扫码 / 检查网络 / 手动导入 |

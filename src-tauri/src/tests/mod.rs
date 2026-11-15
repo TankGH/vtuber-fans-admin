@@ -131,13 +131,14 @@ fn merge_keeps_earliest_interaction_and_locked_nickname() {
         row: 2, uid: "u1".into(), nickname: "原名".into(), guard_level: Some(3), rank: Some(1),
         first_interaction_at: "2024-01-01".into(), birthday: "03-08".into(),
         address: "浙江省·杭州市·西湖区".into(), note: "手动备注".into(),
-        unit_months: None, price_yuan: None,
+        unit_months: None, price_yuan: None, event_type: None, event_at: None,
     };
     let incoming = ParsedRow {
         row: 3, uid: "u1".into(), nickname: "新昵称".into(), guard_level: Some(2), rank: Some(2),
         first_interaction_at: "2025-06-01".into(), birthday: "05-20".into(),
         address: "广东省·深圳市·南山区".into(), note: "导入备注".into(),
         unit_months: Some(1), price_yuan: Some(198.0),
+        event_type: Some("purchase".into()), event_at: Some("2026-01-01".into()),
     };
     {
         let tx = db.conn.transaction().unwrap();
