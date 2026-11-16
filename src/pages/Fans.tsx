@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Search, UserPlus, LockKeyhole, ShieldCheck, RotateCw } from "lucide-react";
+import { Search, UserPlus, LockKeyhole, ShieldCheck, RotateCw, Trash2 } from "lucide-react";
 import { Card, Badge, Button, Field, SelectField, SectionHint } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, type Column } from "@/components/DataTable";
 import { FanDetail } from "@/components/FanDetail";
 import { FanFormModal } from "@/components/FanFormModal";
@@ -18,18 +19,27 @@ export default function Fans() {
   const [editing, setEditing] = useState<FanProfileDto | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<FanProfileDto[]>([]);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     const { data: result, error } = await callSafe<Paged<FanProfileDto>>("profile_list", query as unknown as Record<string, unknown>);
     setLoading(false);
-    if (error) { notify({ tone: "error", title: error.message, detail: error.action }); return; }
+    if (error || !result) {
+      notify({ tone: "error", title: error?.message ?? "档案列表加载失败", detail: error?.action });
+      return;
+    }
     setData(result);
+    setSelectedRows((prev) => prev.map((row) => result.items.find((item) => item.uid === row.uid) ?? row));
   }, [query, notify]);
 
   useEffect(() => { load().catch((err: unknown) => console.error("档案加载失败：", err)); }, [load]);
 
-  const setQ = (patch: Partial<ProfileQuery>) => setQuery((q) => ({ ...q, ...patch, page: 1 }));
+  const setQ = (patch: Partial<ProfileQuery>) => {
+    setQuery((q) => ({ ...q, ...patch, page: 1 }));
+    setSelectedRows([]);
+  };
 
   const submit = async (input: FanProfileInput) => {
     const command = editing ? "profile_update" : "profile_create";
@@ -40,6 +50,20 @@ export default function Fans() {
     await load();
     await refresh();
   };
+
+  const doDelete = async () => {
+    const uids = selectedRows.map((row) => row.uid);
+    if (uids.length === 0) return;
+    const { data: deleted, error } = await callSafe<number>("profile_delete", { uids, confirm: true });
+    if (error) { notify({ tone: "error", title: error.message, detail: error.action }); return; }
+    notify({ tone: "success", title: "档案已删除", detail: `共删除 ${deleted ?? uids.length} 位粉丝档案，相关本机数据已一并清理` });
+    setSelectedRows([]);
+    if (selected && uids.includes(selected.uid)) setSelected(null);
+    await load();
+    await refresh();
+  };
+
+  const deleteNames = selectedRows.slice(0, 5).map((row) => `${row.currentNickname}（${row.uid}）`).join("、");
 
   const columns: Column<FanProfileDto>[] = [
     { key: "uid", title: "UID", width: "130px", render: (p) => <span className="masked-value text-muted">{p.uid}</span> },
@@ -76,7 +100,7 @@ export default function Fans() {
     <div className="flex flex-col gap-5">
       <SectionHint tone="neutral">
         <ShieldCheck size={12} className="inline mr-1" />
-        档案以 B 站 UID 为唯一主键，昵称作为可变属性并保留变更历史。地址与生日加密存储、默认脱敏；同 UID 重复导入会保留最早首次互动时间与手动锁定字段。
+        档案以 B 站 UID 为唯一主键，昵称作为可变属性并保留变更历史。地址与生日加密存储、默认脱敏；同 UID 重复导入会保留最早首次互动时间与手动锁定字段。误导入的档案可勾选后批量删除，删除需二次确认。
       </SectionHint>
 
       <Card>
@@ -102,16 +126,30 @@ export default function Fans() {
             仅看手动锁定
           </label>
           <Button className="mb-0.5" onClick={() => load()}><RotateCw size={14} /> 刷新</Button>
+          <Button variant="danger" className="mb-0.5" disabled={selectedRows.length === 0} onClick={() => setDeleteOpen(true)}>
+            <Trash2 size={14} /> 删除所选{selectedRows.length > 0 ? `（${selectedRows.length}）` : ""}
+          </Button>
           <Button variant="primary" className="mb-0.5" onClick={() => { setEditing(null); setFormOpen(true); }}><UserPlus size={14} /> 新建档案</Button>
         </div>
       </Card>
 
-      <Card title="粉丝档案列表" extra={<Badge tone="primary">{data?.total ?? 0} 位粉丝</Badge>}>
+      <Card title="粉丝档案列表" extra={
+        <div className="flex items-center gap-2">
+          {selectedRows.length > 0 && <Badge tone="danger">已选 {selectedRows.length} 位</Badge>}
+          <Badge tone="primary">{data?.total ?? 0} 位粉丝</Badge>
+        </div>
+      }>
         <DataTable
           columns={columns}
           rows={data?.items ?? []}
           rowKey={(p) => p.uid}
           onRowClick={(p) => setSelected(p)}
+          selectable
+          selectedKeys={selectedRows.map((p) => p.uid)}
+          onSelectedKeysChange={(keys) => setSelectedRows((prev) => [
+            ...prev.filter((row) => keys.includes(row.uid)),
+            ...(data?.items ?? []).filter((row) => keys.includes(row.uid) && !prev.some((p) => p.uid === row.uid)),
+          ])}
           emptyTitle={loading ? "正在加载…" : "没有匹配的档案"}
           emptyDesc="调整筛选条件，或新建档案 / 导入名单"
           page={data?.page}
@@ -129,10 +167,21 @@ export default function Fans() {
           onChanged={async () => {
             await load();
             const { data: fresh } = await callSafe<FanProfileDto>("profile_get", { uid: selected.uid });
-            if (fresh) setSelected(fresh);
+            setSelected(fresh);
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title="删除粉丝档案"
+        description={`即将删除选中的 ${selectedRows.length} 位粉丝档案：${deleteNames}${selectedRows.length > 5 ? " 等" : ""}。`}
+        detail="删除会同时清除这些 UID 的昵称历史、纪念日处理标记、在舰名单与事件、舰礼寄送记录；记账本中已归集的收支记录会保留。此操作不可撤销，建议先备份。"
+        confirmText="确认删除"
+        requireCheck="我已确认上述档案导入有误或不再需要，并了解删除后无法撤销"
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={doDelete}
+      />
 
       <FanFormModal open={formOpen} profile={editing} onClose={() => setFormOpen(false)} onSubmit={submit} />
     </div>

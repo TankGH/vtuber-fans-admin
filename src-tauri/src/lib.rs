@@ -80,10 +80,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_bootstrap,
+            commands::app_clear_all_data,
             commands::profile_list,
             commands::profile_get,
             commands::profile_create,
             commands::profile_update,
+            commands::profile_delete,
             commands::profile_reveal_address,
             commands::profile_set_lock,
             commands::guard_list,

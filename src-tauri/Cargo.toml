@@ -1,6 +1,6 @@
 [package]
 name = "vtuber-fans-admin"
-version = "0.2.0"
+version = "0.3.0"
 description = "粉丝管理系统 · Windows 本地桌面工具"
 authors = ["vtuber-fans-admin"]
 edition = "2021"

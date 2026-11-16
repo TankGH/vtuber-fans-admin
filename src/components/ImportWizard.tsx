@@ -161,7 +161,7 @@ export function ImportWizard({ onFinished }: { onFinished: (result: ImportResult
             </div>
             <div className="flex items-start gap-2 text-xs text-muted">
               <FileText size={14} className="mt-0.5 shrink-0" />
-              <span>样例文件另见 <code className="text-accent">tests/samples/fans_sample.csv</code>，含「晚 风」「大幕丶渐起」与一条缺少 UID 的错误行。</span>
+              <span>样例文件另见 <code className="text-accent">tests/samples/fans_sample.csv</code>，含「雪之下 雪乃」「时崎丶狂三」与一条缺少 UID 的错误行。</span>
             </div>
           </div>
         )}

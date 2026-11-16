@@ -151,3 +151,13 @@ pub fn backup_root(data_dir: &Path) -> std::path::PathBuf {
     let cfg = load(data_dir);
     std::path::PathBuf::from(cfg.backup_dir)
 }
+
+/// 清除全部数据时移除配置文件，下次启动回到默认设置与首启引导
+pub fn clear(data_dir: &Path) -> AppResult<()> {
+    let p = path(data_dir);
+    if p.exists() {
+        std::fs::remove_file(p)
+            .map_err(|e| AppError::new("E_BACKUP_DIR", format!("配置文件清除失败：{e}")))?;
+    }
+    Ok(())
+}

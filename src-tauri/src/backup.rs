@@ -103,6 +103,32 @@ fn cleanup_orphans(dir: &Path, manifest: &BackupManifest) -> AppResult<()> {
     Ok(())
 }
 
+/// 清除本应用生成的备份与导出文件，不触碰用户放在同一目录的其它文件
+pub fn purge_app_files(state: &AppState) -> AppResult<usize> {
+    let dir = backup_dir(state);
+    if !dir.exists() { return Ok(0); }
+    let mut removed = 0;
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() { continue; }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let app_file = name == MANIFEST
+            || (name.starts_with("backup-") && name.ends_with(".enc"))
+            || (name.starts_with("export-") && name.ends_with(".enc"))
+            || (name.starts_with("fans-masked-") && name.ends_with(".csv"));
+        if app_file && fs::remove_file(entry.path()).is_ok() { removed += 1; }
+    }
+    Ok(removed)
+}
+
+pub fn clear_restore_marker(data_dir: &Path) -> AppResult<()> {
+    let p = data_dir.join(MARKER);
+    if p.exists() {
+        fs::remove_file(p).map_err(|e| AppError::new("E_RESTORE_MARKER", format!("恢复标记清除失败：{e}")))?;
+    }
+    Ok(())
+}
+
 /// 启动时执行：数据库打开前处理恢复标记；返回是否已替换
 pub fn apply_restore_marker(data_dir: &Path) -> AppResult<bool> {
     let marker_path = data_dir.join(MARKER);

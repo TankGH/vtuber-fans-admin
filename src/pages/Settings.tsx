@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Palette, FolderOpen, Monitor, Info, Save, RotateCcw, ShieldCheck } from "lucide-react";
+import { Palette, FolderOpen, Monitor, Info, Save, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { Card, Badge, Button, Field, SectionHint } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ThemeSwitch } from "@/components/ThemeSwitch";
 import SyncPanel from "@/components/SyncPanel";
-import { callSafe, isNative, formatDateTime } from "@/lib/ipc";
+import { applyTheme, callSafe, isNative, formatDateTime } from "@/lib/ipc";
 import { useApp } from "@/lib/appContext";
 import { writeOnboarding } from "@/lib/onboarding";
 
@@ -15,6 +16,8 @@ export default function Settings() {
   const [hideYear, setHideYear] = useState(settings?.birthdayYearHidden ?? true);
   const [startup, setStartup] = useState(settings?.launchAtStartup ?? false);
   const [busy, setBusy] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const save = async () => {
     setBusy(true);
@@ -30,6 +33,21 @@ export default function Settings() {
   const replayOnboarding = () => {
     writeOnboarding({ done: false, step: 0, backupDir });
     notify({ tone: "info", title: "引导已重置", detail: "重新打开应用即可再次进入首启引导。" });
+  };
+
+  const clearAllData = async () => {
+    setClearing(true);
+    const { error } = await callSafe("app_clear_all_data", { confirm: true });
+    setClearing(false);
+    if (error) { notify({ tone: "error", title: error.message, detail: error.action }); return; }
+    writeOnboarding({ done: false, step: 0, backupDir: "" });
+    applyTheme("galaxy");
+    notify({
+      tone: "warning",
+      title: "全部数据已清除",
+      detail: "档案、账目、备份、凭证与配置均已删除；重启应用后将重新进入首启引导。此操作不可恢复。",
+    });
+    await refresh();
   };
 
   return (
@@ -71,10 +89,28 @@ export default function Settings() {
 
       <SyncPanel />
 
+      <Card title="危险操作 · 清除全部数据" extra={<Badge tone="danger"><Trash2 size={12} /> 不可恢复</Badge>}>
+        <div className="flex flex-col gap-4">
+          <SectionHint tone="danger">
+            清空前请务必确认：此操作会永久删除本机保存的粉丝档案与加密地址、昵称历史、大航海名单与快照、纪念日、舰礼台账、记账流水、自动备份、登录凭证及本地配置。
+          </SectionHint>
+          <ul className="text-xs text-muted leading-relaxed list-disc pl-5 space-y-1">
+            <li>没有回收站，也不会保留恢复标记；清除后无法通过这些数据恢复。</li>
+            <li>备份目录里由本应用生成的备份与导出文件会一并删除，其它文件不受影响。</li>
+            <li>加密密钥会保留，以保证清空后仍能正常录入新数据。</li>
+          </ul>
+          <div>
+            <Button variant="danger" onClick={() => setClearOpen(true)}>
+              <Trash2 size={14} /> 一键清除全部保存的数据
+            </Button>
+          </div>
+        </div>
+      </Card>
+
       <Card title="关于与诊断" extra={<Badge tone="success"><ShieldCheck size={12} /> 数据不出本机</Badge>}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="flex flex-col gap-2 text-sm">
-            <Diag label="版本" value="v0.2.0 · 台账与可选同步" />
+            <Diag label="版本" value="v0.3.0 · 批量删除与全量清除" />
             <Diag label="运行模式" value={isNative() ? "Tauri v2 原生端" : "浏览器演示模式（前端独立验证）"} />
             <Diag label="上次备份" value={formatDateTime(bootstrap?.backupHealth.lastBackupAt ?? null)} />
             <Diag label="粉丝档案" value={`${bootstrap?.fanCount ?? 0} 位`} />
@@ -86,6 +122,17 @@ export default function Settings() {
           </div>
         </div>
       </Card>
+
+      <ConfirmDialog
+        open={clearOpen}
+        title="最终确认：清除全部保存的数据"
+        description="你正在执行不可恢复的清空操作。所有粉丝档案、敏感信息、名单快照、账目、备份与配置都将被永久删除。"
+        detail="确认后立即执行，不会移动到回收站，也不会保留恢复标记。若尚未另行保存需要的备份，请取消本操作。"
+        confirmText={clearing ? "正在清除…" : "我确认，永久清除全部数据"}
+        requireCheck="我已另行保存需要的备份，并确认要永久清除本机全部数据（不可撤销）"
+        onClose={() => setClearOpen(false)}
+        onConfirm={clearAllData}
+      />
     </div>
   );
 }

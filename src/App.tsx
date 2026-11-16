@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   LayoutDashboard, UsersRound, Ship, DatabaseBackup, Settings2, Gift, CalendarHeart,
-  Wallet, Search, Bell, Minus, ShieldCheck, Sparkles, ChevronRight, FolderOpen,
+  Wallet, Search, Bell, ShieldCheck, Sparkles, ChevronRight, FolderOpen,
 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import { AppProvider, type Banner } from "@/lib/appContext";
@@ -133,9 +133,6 @@ export default function App() {
               </button>
             )}
             <ThemeSwitch value={theme} onChange={setTheme} compact />
-            <Button className="px-2.5 py-2" title="最小化到托盘" aria-label="最小化到托盘" onClick={() => notify({ tone: "info", title: isNative() ? "已最小化到托盘" : "浏览器预览模式", detail: isNative() ? "后台继续守护本地数据" : "桌面端安装后可最小化到系统托盘" })}>
-              <Minus size={15} />
-            </Button>
           </div>
         </header>
 

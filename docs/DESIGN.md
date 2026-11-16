@@ -1,7 +1,7 @@
 # 详细设计 · vtuber-fans-admin
 
 > **权威需求来源**：[`../requirement-doc.md`](../requirement-doc.md)。本文为实现层详细设计；架构分层与安全模型见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)，后续能力见 [`ROADMAP.md`](./ROADMAP.md)。
-> **当前范围（v0.2.0）**：F1–F7 均可用；F3 / F4 / F5 为完整业务页面；同步引擎为**用户可选启用**的网页端低频快照（默认关闭，启用后按需扫码登录），不含 WebSocket 实时事件订阅。
+> **当前范围（v0.3.0）**：F1–F7 均可用；F3 / F4 / F5 为完整业务页面；同步引擎为**用户可选启用**的网页端低频快照（默认关闭，启用后按需扫码登录），不含 WebSocket 实时事件订阅。
 > ⚠ **扫码自动获取尚未完成真实账号验证，当前不建议使用**：设置面板、启用确认框与扫码弹窗均放置醒目提示，正式名单请走手动导入。
 
 ## 1. 需求追溯矩阵
@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS activity_log (
 ```
 
 **设计要点**
-- `uid TEXT PRIMARY KEY`，昵称永远不是主键；导入时数字形态昵称不自动当 UID（工作区约定：`晚 风`、`大幕丶渐起` 等昵称原样保留）。
+- `uid TEXT PRIMARY KEY`，昵称永远不是主键；导入时数字形态昵称不自动当 UID（工作区约定：`02`、`雪之下 雪乃`、`时崎丶狂三` 等昵称原样保留）。
 - `birthday_encrypted` / `address_encrypted` 为 BLOB，明文不出 Rust 侧；DTO 只含 `birthday_masked` / `address_masked`。
 - `manual_locked_fields` 为 JSON 数组，是合并状态机的**唯一裁决依据**。
 - `guard_snapshot.snapshot_date UNIQUE` 防同日重复导入；手动导入「某日名单」时以日期去重。

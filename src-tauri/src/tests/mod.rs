@@ -6,7 +6,7 @@ use crate::crypto::Crypto;
 use crate::db::{self, AppState};
 use crate::error::ERROR_CODES;
 use crate::import::{build_rows, default_mapping, parse_delimited, parse_level, suggest_mapping};
-use crate::models::{AddressValue, BirthdayValue, ParsedRow};
+use crate::models::{AddressValue, BirthdayValue, FanProfileInput, ParsedRow};
 use crate::profile;
 
 mod features;
@@ -160,6 +160,87 @@ fn merge_keeps_earliest_interaction_and_locked_nickname() {
 }
 
 #[test]
+fn delete_profiles_requires_confirmation_and_cleans_related_rows() {
+    let (_tmp, state) = temp_state();
+    let mut db = state.lock_db().unwrap();
+    for (uid, nickname) in [("d1", "误导入一"), ("d2", "误导入二")] {
+        profile::create(&db, &FanProfileInput {
+            uid: uid.to_string(), current_nickname: nickname.to_string(), ..Default::default()
+        }).unwrap();
+    }
+    assert!(profile::delete(&mut db, &["d1".to_string()], false).is_err(), "缺少二次确认必须拒绝删除");
+
+    for sql in [
+        "INSERT INTO fan_nickname_history(uid, nickname, changed_at) VALUES ('d1','旧昵称','2026-01-01T00:00:00Z')",
+        "INSERT INTO guard_snapshot(snapshot_date, fetched_at) VALUES ('2026-01-01','2026-01-01T00:00:00Z')",
+        "INSERT INTO guard_snapshot_member(snapshot_id, uid, guard_level) VALUES (1,'d1',3)",
+        "INSERT INTO guard_event(uid, nickname, event_type, event_at, source, price_yuan) VALUES ('d1','误导入一','purchase','2026-01-01','import',198)",
+        "INSERT INTO reminder_ack(uid, reminder_type, reminder_date, acked_at) VALUES ('d1','birthday','01-01','2026-01-01T00:00:00Z')",
+        "INSERT INTO custom_reminder(title, uid, anchor_date, rule, offset_days, created_at) VALUES ('测试','d1','2026-01-01','once',0,'2026-01-01T00:00:00Z')",
+        "INSERT INTO gift_batch(name, created_at) VALUES ('批次','2026-01-01T00:00:00Z')",
+        "INSERT INTO gift_shipment(batch_id, uid, shipment_status, updated_at) VALUES (1,'d1','pending','2026-01-01T00:00:00Z')",
+        "INSERT INTO ledger_entry(entry_type, category, amount_yuan, occurred_at, note) VALUES ('income','大航海',198,'2026-01-01','已归集收入')",
+    ] {
+        db.conn.execute(sql, []).unwrap();
+    }
+
+    let deleted = profile::delete(&mut db, &[
+        "d1".to_string(), "d2".to_string(), "d1".to_string(),
+    ], true).unwrap();
+    assert_eq!(deleted, 2, "重复 UID 只能删除一次");
+
+    for (table, expected) in [
+        ("fan_profile", 0), ("fan_nickname_history", 0), ("guard_snapshot_member", 0),
+        ("guard_event", 0), ("reminder_ack", 0), ("custom_reminder", 0), ("gift_shipment", 0),
+    ] {
+        let count: i64 = db.conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap();
+        assert_eq!(count, expected, "{table} 未正确清理");
+    }
+    let ledger_count: i64 = db.conn.query_row("SELECT COUNT(*) FROM ledger_entry", [], |r| r.get(0)).unwrap();
+    assert_eq!(ledger_count, 1, "账目流水必须保留");
+}
+
+#[test]
+fn clear_all_requires_confirmation_and_wipes_local_data() {
+    let (_tmp, state) = temp_state();
+    {
+        let db = state.lock_db().unwrap();
+        profile::create(&db, &FanProfileInput {
+            uid: "clear1".to_string(), current_nickname: "待清除".to_string(), ..Default::default()
+        }).unwrap();
+        db.conn.execute(
+            "INSERT INTO ledger_entry(entry_type, category, amount_yuan, occurred_at, note) VALUES ('income','大航海',198,'2026-01-01','待清除')",
+            [],
+        ).unwrap();
+    }
+    let backup_dir = state.data_dir.parent().unwrap().join("backups");
+    std::fs::create_dir_all(&backup_dir).unwrap();
+    let backup_file = backup_dir.join("backup-test.enc");
+    let manifest = backup_dir.join("manifest.json");
+    let session = state.data_dir.join("bili_session.enc");
+    let marker = state.data_dir.join("restore.json");
+    for p in [&backup_file, &manifest, &session, &marker] {
+        std::fs::write(p, b"dummy").unwrap();
+    }
+
+    assert!(db::clear_all(&state, false).is_err(), "清除全部数据必须二次确认");
+    let count: i64 = state.lock_db().unwrap().conn
+        .query_row("SELECT COUNT(*) FROM fan_profile", [], |r| r.get(0)).unwrap();
+    assert_eq!(count, 1, "未确认时不得改动任何数据");
+
+    db::clear_all(&state, true).unwrap();
+    let db = state.lock_db().unwrap();
+    for table in ["fan_profile", "ledger_entry", "activity_log", "custom_reminder"] {
+        let n: i64 = db.conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "{table} 未清空");
+    }
+    drop(db);
+    for p in [&backup_file, &manifest, &session, &marker, &state.data_dir.join("settings.json")] {
+        assert!(!p.exists(), "{} 未被清除", p.display());
+    }
+}
+
+#[test]
 fn backup_rotates_to_seven_with_manifest() {
     let (_tmp, state) = temp_state();
     for _ in 0..9 {
@@ -178,8 +259,8 @@ fn xlsx_sample_is_readable_by_calamine() {
     assert!(path.exists(), "缺少 xlsx 导入样例：{}", path.display());
     let (headers, rows) = crate::import::parse_workbook_for_test(&path).unwrap();
     assert_eq!(headers.first().map(String::as_str), Some("uid"));
-    assert!(rows.iter().any(|r| r.get(1).map(String::as_str) == Some("晚 风")));
-    assert!(rows.iter().any(|r| r.get(1).map(String::as_str) == Some("大幕丶渐起")));
+    assert!(rows.iter().any(|r| r.get(1).map(String::as_str) == Some("雪之下 雪乃")));
+    assert!(rows.iter().any(|r| r.get(1).map(String::as_str) == Some("时崎丶狂三")));
     assert!(rows.iter().any(|r| r.first().map(String::is_empty) == Some(true)));
 }
 

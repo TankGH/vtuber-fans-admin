@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use std::collections::HashMap;
 
 use crate::crypto::now_iso;
@@ -197,6 +197,39 @@ pub fn set_lock(db: &Db, uid: &str, field: &str, locked: bool) -> AppResult<FanP
         params![locked_json(&fields), now_iso(), uid],
     )?;
     get(db, uid, true)
+}
+
+/// 批量删除档案：前端二次确认后必须显式传入 confirm=true。
+/// 同时清理该 UID 的本机派生数据；账目流水属于财务记录，故意保留。
+pub fn delete(db: &mut Db, uids: &[String], confirm: bool) -> AppResult<usize> {
+    if !confirm {
+        return Err(AppError::invalid("删除档案需要二次确认"));
+    }
+    let mut unique: Vec<String> = Vec::new();
+    for uid in uids {
+        let uid = uid.trim();
+        if !uid.is_empty() && !unique.iter().any(|u| u == uid) {
+            unique.push(uid.to_string());
+        }
+    }
+    if unique.is_empty() {
+        return Err(AppError::invalid("请先选择要删除的档案"));
+    }
+
+    let placeholders = vec!["?"; unique.len()].join(",");
+    let tx = db.conn.transaction()?;
+    let mut deleted = 0;
+    for table in [
+        "fan_nickname_history", "reminder_ack", "custom_reminder",
+        "guard_snapshot_member", "guard_event", "gift_shipment", "fan_profile",
+    ] {
+        let sql = format!("DELETE FROM {table} WHERE uid IN ({placeholders})");
+        let count = tx.execute(&sql, params_from_iter(unique.iter()))?;
+        if table == "fan_profile" { deleted = count; }
+    }
+    crate::db::log_activity(&tx, "profile", &format!("删除 {} 位粉丝档案", deleted))?;
+    tx.commit()?;
+    Ok(deleted)
 }
 
 pub fn create(db: &Db, input: &FanProfileInput) -> AppResult<FanProfileDto> {

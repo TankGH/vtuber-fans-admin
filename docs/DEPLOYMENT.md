@@ -1,6 +1,6 @@
 # 守村人·粉丝档案 · 部署与使用指南
 
-> 适用版本：v0.2.0 · 目标平台：Windows 10 / 11 x64 · 更新：2026-11-15
+> 适用版本：v0.3.0 · 目标平台：Windows 10 / 11 x64 · 更新：2026-11-16
 >
 > 一句话：把安装包拷到目标电脑，双击安装，首启时选一个备份目录即可开始用。全程**不联网、不登录、不需要管理员权限**，粉丝资料只留在这台电脑上。
 
@@ -47,8 +47,8 @@
 
 | 内容 | 位置 / 名称 |
 | --- | --- |
-| 免安装可执行文件 | `release/vtuber-fans-admin.exe`（18,668,032 字节，SHA-256 `BEBF7B84B5213D42545E7A4A4B8C2BED808E90D74ECEE57F9D60E7BD2C3A9CF7`；前端资源已内嵌，有 WebView2 即可双击运行；本地构建输出为 `src-tauri/target/release/vtuber-fans-admin.exe`） |
-| NSIS 安装包（当前交付） | `release/守村人·粉丝档案_0.2.0_x64-setup.exe`（4.49 MiB / 4,709,664 字节，SHA-256 `9C5E34D9CCD3BE58048784778D4A2E69E6E9D4E8296FD46FC27A90F099BA32BD`；本地构建输出为 `src-tauri/target/release/bundle/nsis/`） |
+| 免安装可执行文件 | `release/vtuber-fans-admin.exe`（18,696,704 字节，SHA-256 `2059EBBAF987770C0810B47E9B9589F04DB0BFDE8854B98CEC1AADDFC13591D8`；前端资源已内嵌，有 WebView2 即可双击运行；构建中间产物为 `src-tauri/target/release/vtuber-fans-admin.exe`） |
+| NSIS 安装包（当前交付） | `release/守村人·粉丝档案_0.3.0_x64-setup.exe`（4.50 MiB / 4,716,936 字节，SHA-256 `DFF8A10AF02557FF52785D39F1059DA5588747DF1C634323B6CBA257F4F9D793`；构建中间产物为 `src-tauri/target/release/bundle/nsis/`） |
 | 前端产物 | `dist/`（构建中间产物，不单独分发） |
 | 源码交付 | 仓库内源码与文档，排除 `node_modules/`、`dist/`、`src-tauri/target/`、`*.db`、`app.key` 与备份目录 |
 
@@ -86,13 +86,13 @@ cd d:\workspace\codebuddy\vtuber\vtuber-fans-admin
 npm run tauri:build
 ```
 
-该命令会先执行 `npm run build`（`tsc --noEmit && vite build`），再编译 Rust Core 并生成 NSIS 安装包。首次打包需要联网下载 NSIS 与插件工具包（缓存到 `%LOCALAPPDATA%\tauri`），release 编译通常 2–10 分钟；GitHub 下载抖动时报 `timeout: global` 时**重试即可**。
+该命令会先执行 `npm run build`（`tsc --noEmit && vite build`），再编译 Rust Core 并生成 NSIS 安装包，最后自动把免安装 exe 与当前版本安装包复制到 `release/`。首次打包需要联网下载 NSIS 与插件工具包（缓存到 `%LOCALAPPDATA%\tauri`），release 编译通常 2–10 分钟；GitHub 下载抖动时报 `timeout: global` 时**重试即可**。
 
 > `tauri.conf.json` 的 `bundle.targets` 当前为 `["nsis"]`。WiX 3 默认代码页 1252 不支持中文产品名（报错 `LGHT0311`），故当前不产出 MSI；恢复方法见 §6。
 
 #### 只想自己双击启动？
 
-不装安装包也可以：直接双击仓库 `release/vtuber-fans-admin.exe`（本地重新构建时该文件输出在 `src-tauri/target/release/`）。Tauri 会把 `dist/` 前端资源编译进这个 exe，只要目标机器有 WebView2 Runtime 就能直接运行，不需要 Node.js、Rust、数据库服务或安装过程。**首次启动会出现两步引导（选备份目录 → 完成）**，之后数据落在 `%APPDATA%\com.vtuber.fans.admin`。适用于本机自用与快速验收；要分发给主播 / 助理仍建议使用 `release/守村人·粉丝档案_0.2.0_x64-setup.exe`（带快捷方式与卸载入口）。
+不装安装包也可以：直接双击仓库 `release/vtuber-fans-admin.exe`（本地重新构建后会自动覆盖该文件；构建中间产物在 `src-tauri/target/release/`）。Tauri 会把 `dist/` 前端资源编译进这个 exe，只要目标机器有 WebView2 Runtime 就能直接运行，不需要 Node.js、Rust、数据库服务或安装过程。**首次启动会出现两步引导（选备份目录 → 完成）**，之后数据落在 `%APPDATA%\com.vtuber.fans.admin`。适用于本机自用与快速验收；要分发给主播 / 助理仍建议使用 `release/守村人·粉丝档案_0.3.0_x64-setup.exe`（带快捷方式与卸载入口）。
 
 > 若只想要 exe、不想等待安装包生成，可在 MSVC 环境中执行 `cd src-tauri; cargo build --release`（前提是 `dist/` 已由 `npm run build` 生成），产物同样是上面的 exe。
 
@@ -102,7 +102,7 @@ npm run tauri:build
 
 | # | 检查项 | 期望结果 |
 | --- | --- | --- |
-| 1 | 记录安装包 SHA-256 | `Get-FileHash ".\守村人·粉丝档案_0.2.0_x64-setup.exe" -Algorithm SHA256`；本机实测 `9C5E34D9CCD3BE58048784778D4A2E69E6E9D4E8296FD46FC27A90F099BA32BD` |
+| 1 | 记录安装包 SHA-256 | `Get-FileHash ".\守村人·粉丝档案_0.3.0_x64-setup.exe" -Algorithm SHA256`；本机实测 `DFF8A10AF02557FF52785D39F1059DA5588747DF1C634323B6CBA257F4F9D793` |
 | 2 | 安装后启动 | 出现首启引导，窗口标题为「守村人·粉丝档案」 |
 | 3 | 数据文件 | 首次启动后生成 `fans.db`、`app.key`、`settings.json`（路径见 §3.3） |
 | 4 | 启动自动备份 | 备份目录出现 `backup-*.enc` 与 `manifest.json` |
@@ -117,7 +117,7 @@ npm run tauri:build
 | 13 | 导入事件与快照日期 | 含金额 / 月数的 CSV 导入后结果回显事件数，事件页出现购买与续费记录，记账本「未归集事件」非零且可归集；快照日期填未来值会被明确拒绝，填过去值能补录并回显 |
 | 14 | 单实例 | 安装完成勾选「运行应用」后再从开始菜单启动一次，任务管理器应只有 1 个 `vtuber-fans-admin.exe` 主进程、1 个窗口，第二次启动只把已有窗口置前 |
 
-> **验证状态（2026-11-15，如实说明）**：`npm run tauri:build` 已执行成功（`EXIT=0`），产物大小与 SHA-256 见 §1.3 与根 [`README.md`](../README.md)。原生 exe 已在本机冒烟启动，窗口标题「守村人·粉丝档案」、进程响应正常、生成 `fans.db` / `app.key` / `settings.json`；**#14 的单实例逻辑已在本机以重新打包的免安装 exe 连续启动两次验证：仅 1 个 `vtuber-fans-admin.exe` 主进程、1 个主窗口，第二次启动未新增进程**。浏览器演示模式已覆盖上表 9–11、13 及档案星座 / 徽章 / 过期标注、F5 手动记账保存、F3 两类里程碑与自定义纪念日 CRUD（不会访问真实 B 站）；**#12 未验证且当前不建议使用**。但**真实账号扫码登录、安装向导（含 Finish 页自动启动）、托盘最小化、原生 Toast、恢复重启与 DPAPI 解密仍未做人工端到端验证**，#14 的安装版场景仍建议在干净机器上按上表方法实测一次，结果回填 README。
+> **验证状态（2026-11-16，如实说明）**：`npm run tauri:build` 已执行成功（`EXIT=0`），产物大小与 SHA-256 见 §1.3 与根 [`README.md`](../README.md)。原生 exe 已在本机冒烟启动，窗口标题「守村人·粉丝档案」、进程响应正常、生成 `fans.db` / `app.key` / `settings.json`；档案批量删除与全量清除已有前后端单测覆盖；**#14 的单实例逻辑已在本机以重新打包的免安装 exe 连续启动两次验证：仅 1 个 `vtuber-fans-admin.exe` 主进程、1 个主窗口，第二次启动未新增进程**。浏览器演示模式已覆盖上表 9–11、13 及档案星座 / 徽章 / 过期标注、F5 手动记账保存、F3 两类里程碑与自定义纪念日 CRUD（不会访问真实 B 站）；**#12 未验证且当前不建议使用**。但**真实账号扫码登录、安装向导（含 Finish 页自动启动）、托盘最小化、原生 Toast、恢复重启与 DPAPI 解密仍未做人工端到端验证**，#14 的安装版场景仍建议在干净机器上按上表方法实测一次，结果回填 README。
 >
 > 实测报告 `tests/out/守村人粉丝档案-v0.2测试报告.html` 的 **P1–P4 已全部关闭**：P1 保存误报（`ledger.rs` 在 `INSERT` 后立即捕获 rowid + 保存重入锁）；P2 导入不生成事件 / 未来快照静默忽略（补全 12 列映射、事件写入与等级解耦、结果回显、快照日期前后端双校验、时间基准统一为本地）；P3 首启双窗口（注册 `tauri-plugin-single-instance`，第二实例退出并唤起已有窗口）；P4 导出位置（F4 默认写备份目录、自动建目录、带时间戳、提示完整路径）。每一项都有回归单测；**安装版仍建议按报告 §5 复测一次以最终确认**。
 
@@ -135,7 +135,7 @@ npm run tauri:build
 
 > 本机自用可跳过安装：直接双击 `src-tauri/target/release/vtuber-fans-admin.exe`（见 §2.2）。下面是分发给他人时的安装流程。
 
-1. 双击 NSIS 安装包 `守村人·粉丝档案_0.2.0_x64-setup.exe`，按向导选择安装目录（默认即可），无需管理员权限。
+1. 双击 NSIS 安装包 `守村人·粉丝档案_0.3.0_x64-setup.exe`，按向导选择安装目录（默认即可），无需管理员权限。
 2. 安装完成后从开始菜单或桌面快捷方式启动「守村人·粉丝档案」。
 3. 若提示缺少 WebView2 Runtime，先安装微软 Evergreen Runtime，之后运行不再需要联网。
 
@@ -349,4 +349,4 @@ npm run tauri:build
 | [`ROADMAP.md`](./ROADMAP.md) | 已完成阶段与后续演进（WebSocket 实时事件、密钥迁移、全库加密） |
 | 本文档 | 部署打包与日常使用 |
 
-当前交付为 v0.2.0：F3 纪念日提醒（含上舰 N 天 / N 周年里程碑与用户自建纪念日）、F4 舰礼寄送台账、F5 主播记账本均已可用；自动抓取默认关闭，由用户主动启用后按需扫码登录（尚未验证，当前不建议使用）。Rust Core 编译与单测、前端构建与单测、Vite + 浏览器演示模式的 UI 自动化均已通过；`npm run tauri:build` 产出 NSIS 安装包与免安装 exe 并随仓库分发。真实 B 站账号的扫码登录与名单拉取、安装向导、托盘最小化、原生 Toast、恢复重启与 DPAPI 解密的人工端到端验证仍按 §2.3 清单补齐。
+当前交付为 v0.3.0：F3 纪念日提醒（含上舰 N 天 / N 周年里程碑与用户自建纪念日）、F4 舰礼寄送台账、F5 主播记账本均已可用；自动抓取默认关闭，由用户主动启用后按需扫码登录（尚未验证，当前不建议使用）。Rust Core 编译与单测、前端构建与单测、Vite + 浏览器演示模式的 UI 自动化均已通过；`npm run tauri:build` 产出 NSIS 安装包与免安装 exe 并随仓库分发。真实 B 站账号的扫码登录与名单拉取、安装向导、托盘最小化、原生 Toast、恢复重启与 DPAPI 解密的人工端到端验证仍按 §2.3 清单补齐。

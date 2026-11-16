@@ -54,9 +54,11 @@ import {
 import { buildPreview, buildRows, earliestInteraction, getCell, parseDelimited } from "@/lib/importLogic";
 
 const STORAGE_KEY = "vtuber-fans-admin.demo.v1";
+const CLEARED_KEY = "vtuber-fans-admin.demo.cleared.v1";
 
 // Node / Vitest 环境没有 localStorage，用进程内状态回退，保证写操作可验证
 let memoryState: DemoState | null = null;
+let demoCleared = false;
 
 interface DemoState {
   profiles: FanProfileDto[];
@@ -112,6 +114,42 @@ function initialState(): DemoState {
   };
 }
 
+function emptyState(): DemoState {
+  return {
+    profiles: [],
+    guardMembers: [],
+    snapshots: [],
+    events: [],
+    backups: [],
+    settings: {
+      ...DEFAULT_SETTINGS,
+      onboardingDone: false,
+      roomId: "",
+      cookieConfigured: false,
+    },
+    activities: [],
+    addresses: {},
+    importContent: "",
+    nextImportBatchId: 1,
+    reminders: [],
+    customReminders: [],
+    nextCustomReminderId: 1,
+    giftBatches: [],
+    giftShipments: [],
+    ledgerEntries: [],
+    sync: {
+      ...seedSyncStatus(),
+      roomId: "",
+      loginState: "not_logged_in",
+      message: "自动抓取已关闭，名单可通过 CSV / Excel 手动导入。",
+    },
+    qr: null,
+    nextGiftBatchId: 1,
+    nextShipmentId: 1,
+    nextLedgerId: 1,
+  };
+}
+
 function syncSettings(state: DemoState): void {
   state.sync.roomId = state.settings.roomId;
   state.sync.snapshotHour = state.settings.snapshotHour;
@@ -128,13 +166,15 @@ function syncSettings(state: DemoState): void {
 
 function load(): DemoState {
   if (typeof localStorage === "undefined") {
-    if (!memoryState) memoryState = initialState();
+    if (!memoryState) memoryState = demoCleared ? emptyState() : initialState();
     return memoryState;
   }
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return initialState();
+  const cleared = localStorage.getItem(CLEARED_KEY) === "1";
+  const base = cleared ? emptyState() : initialState();
+  if (!raw) return base;
   const parsed = JSON.parse(raw) as Partial<DemoState>;
-  return { ...initialState(), ...parsed, settings: { ...DEFAULT_SETTINGS, ...parsed.settings } };
+  return { ...base, ...parsed, settings: { ...DEFAULT_SETTINGS, ...parsed.settings } };
 }
 
 function save(state: DemoState): void {
@@ -254,7 +294,11 @@ function toDto(input: FanProfileInput, base?: FanProfileDto): FanProfileDto {
 
 export function resetDemoState(): void {
   memoryState = null;
-  if (typeof localStorage !== "undefined") localStorage.removeItem(STORAGE_KEY);
+  demoCleared = false;
+  if (typeof localStorage !== "undefined") {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(CLEARED_KEY);
+  }
 }
 
 export function isNative(): boolean {
@@ -364,6 +408,13 @@ function ledgerSummary(state: DemoState): LedgerSummaryDto {
 
 const handlers: Record<string, Handler> = {
   app_bootstrap: () => bootstrap(),
+  app_clear_all_data: (a) => {
+    if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "清除全部数据需要二次确认" };
+    demoCleared = true;
+    if (typeof localStorage !== "undefined") localStorage.setItem(CLEARED_KEY, "1");
+    save(emptyState());
+    return null;
+  },
   profile_list: (a) => profileList(a),
   profile_get: (a) => {
     const p = load().profiles.find((x) => x.uid === a.uid);
@@ -392,6 +443,29 @@ const handlers: Record<string, Handler> = {
     logActivity(state, "profile", `更新档案 ${dto.currentNickname} 的资料`);
     save(state);
     return dto;
+  },
+  profile_delete: (a) => {
+    if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "删除档案需要二次确认" };
+    const inputUids = (a.uids as string[] | undefined) ?? [];
+    const uids = [...new Set(inputUids.map((uid) => String(uid).trim()).filter(Boolean))];
+    if (uids.length === 0) throw { code: "E_INVALID_INPUT", message: "请先选择要删除的档案" };
+    const uidSet = new Set(uids);
+    const state = load();
+    const before = state.profiles.length;
+    state.profiles = state.profiles.filter((p) => !uidSet.has(p.uid));
+    uids.forEach((uid) => { delete state.addresses[uid]; });
+    state.guardMembers = state.guardMembers.filter((g) => !uidSet.has(g.uid));
+    state.events = state.events.filter((e) => !uidSet.has(e.uid));
+    const affectedBatchIds = [...new Set(state.giftShipments.filter((s) => uidSet.has(s.uid)).map((s) => s.batchId))];
+    state.giftShipments = state.giftShipments.filter((s) => !uidSet.has(s.uid));
+    affectedBatchIds.forEach((id) => refreshBatchCounts(state, id));
+    const removedCustomIds = state.customReminders.filter((c) => c.uid && uidSet.has(c.uid)).map((c) => c.id);
+    state.customReminders = state.customReminders.filter((c) => !c.uid || !uidSet.has(c.uid));
+    state.reminders = state.reminders.filter((r) => !uidSet.has(r.uid) && !removedCustomIds.includes(r.customId ?? -1));
+    const deleted = before - state.profiles.length;
+    logActivity(state, "profile", `删除 ${deleted} 位粉丝档案`);
+    save(state);
+    return deleted;
   },
   profile_reveal_address: (a) => {
     if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "查看完整地址需要二次确认" };
@@ -681,7 +755,7 @@ const handlers: Record<string, Handler> = {
   gift_batch_export: (a) => {
     if (!a.confirm) throw { code: "E_INVALID_INPUT", message: "导出寄送清单需要二次确认" };
     const state = load();
-    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
     const path = `${state.settings.backupDir}\\gift-batch-${a.batchId}-masked-${stamp}.csv`;
     return { path, sizeBytes: 2048, masked: true } as ExportResult;
   },

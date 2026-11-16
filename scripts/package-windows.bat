@@ -32,8 +32,8 @@ if errorlevel 1 goto fail
 
 echo.
 echo ==== 打包完成 ====
-echo 免安装可执行文件: src-tauri\target\release\vtuber-fans-admin.exe
-echo NSIS 安装包      : src-tauri\target\release\bundle\nsis\
+echo 免安装可执行文件: release\vtuber-fans-admin.exe
+echo NSIS 安装包      : release\守村人·粉丝档案_0.3.0_x64-setup.exe
 echo 双击 exe 即可启动（需要 WebView2 Runtime）；首次启动会要求选择备份目录。
 pause
 exit /b 0

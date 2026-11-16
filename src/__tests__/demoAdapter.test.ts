@@ -65,4 +65,44 @@ describe("演示数据适配器", () => {
     invoke("profile_create", { input });
     expect(invoke<BootstrapDto>("app_bootstrap").fanCount).toBe(before + 1);
   });
+
+  it("批量删除档案需要二次确认并清理关联数据", () => {
+    const before = invoke<BootstrapDto>("app_bootstrap").fanCount;
+    invoke("profile_create", { input: { uid: "9000001", currentNickname: "误导入一" } });
+    invoke("profile_create", { input: { uid: "9000002", currentNickname: "误导入二" } });
+    expect(invoke<BootstrapDto>("app_bootstrap").fanCount).toBe(before + 2);
+
+    expect(() => invoke("profile_delete", { uids: ["9000001"], confirm: false })).toThrow();
+    invoke("custom_reminder_save", { input: {
+      title: "待清理纪念日", uid: "9000001", anchorDate: "2026-01-01", rule: "once",
+    } });
+    const batch = invoke<{ id: number }>("gift_batch_create", {
+      name: "待清理批次", memberUids: ["9000001", "9000002"],
+    });
+
+    const deleted = invoke<number>("profile_delete", {
+      uids: ["9000001", "9000002", "9000001"], confirm: true,
+    });
+    expect(deleted).toBe(2);
+    expect(invoke<BootstrapDto>("app_bootstrap").fanCount).toBe(before);
+    expect(invoke<{ total: number }>("profile_list", { keyword: "误导入" }).total).toBe(0);
+    expect(invoke<Array<{ uid: string | null }>>("custom_reminder_list").filter((c) => c.uid === "9000001")).toHaveLength(0);
+    expect(invoke<Array<{ uid: string }>>("gift_shipment_list", { batchId: batch.id }).some((s) => s.uid === "9000001")).toBe(false);
+  });
+
+  it("清除全部数据需要二次确认，并回到空状态", () => {
+    const before = invoke<BootstrapDto>("app_bootstrap");
+    expect(before.fanCount).toBeGreaterThan(0);
+
+    expect(() => invoke("app_clear_all_data", { confirm: false })).toThrow();
+    expect(invoke<BootstrapDto>("app_bootstrap").fanCount).toBe(before.fanCount);
+
+    invoke("app_clear_all_data", { confirm: true });
+    const cleared = invoke<BootstrapDto>("app_bootstrap");
+    expect(cleared.fanCount).toBe(0);
+    expect(cleared.settings.onboardingDone).toBe(false);
+    expect(cleared.backupHealth.backupCount).toBe(0);
+    expect(invoke<{ total: number }>("profile_list").total).toBe(0);
+    expect(invoke<Array<unknown>>("gift_batch_list")).toHaveLength(0);
+  });
 });

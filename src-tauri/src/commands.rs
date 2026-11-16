@@ -20,7 +20,15 @@ struct UidArgs { uid: String, confirm: Option<bool> }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
+struct ConfirmArgs { confirm: Option<bool> }
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 struct LockArgs { uid: String, field: String, locked: bool }
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct DeleteArgs { uids: Vec<String>, confirm: Option<bool> }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -60,6 +68,13 @@ pub fn app_bootstrap(state: State<'_, AppState>, payload: Value) -> AppResult<Bo
     db::bootstrap(&state)
 }
 
+/// 清除全部数据必须带 confirm=true，前端危险操作弹窗负责二次确认
+#[tauri::command]
+pub fn app_clear_all_data(state: State<'_, AppState>, payload: Value) -> AppResult<()> {
+    let a: ConfirmArgs = args(&payload)?;
+    db::clear_all(&state, a.confirm == Some(true))
+}
+
 #[tauri::command]
 pub fn profile_list(state: State<'_, AppState>, payload: Value) -> AppResult<Paged<FanProfileDto>> {
     let q: ProfileQuery = args(&payload)?;
@@ -90,6 +105,14 @@ pub fn profile_update(state: State<'_, AppState>, payload: Value) -> AppResult<F
     let input = a.input.ok_or_else(|| AppError::invalid("缺少档案内容"))?;
     let db = state.lock_db()?;
     profile::update(&db, &a.uid, &input)
+}
+
+/// 批量删除档案必须带 confirm=true，由前端二次确认对话框传入
+#[tauri::command]
+pub fn profile_delete(state: State<'_, AppState>, payload: Value) -> AppResult<usize> {
+    let a: DeleteArgs = args(&payload)?;
+    let mut db = state.lock_db()?;
+    profile::delete(&mut db, &a.uids, a.confirm == Some(true))
 }
 
 /// 完整地址必须带 confirm=true，前端二次确认对话框负责传入

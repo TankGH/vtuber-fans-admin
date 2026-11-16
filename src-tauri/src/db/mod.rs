@@ -85,6 +85,40 @@ pub fn activities(conn: &Connection, limit: usize) -> AppResult<Vec<ActivityDto>
     Ok(out)
 }
 
+/// 一键清除本机全部业务数据、备份、凭证与配置；保留加密密钥以保证应用后续可正常使用。
+/// 必须携带二次确认参数，且只删除本应用生成的文件。
+pub fn clear_all(state: &AppState, confirm: bool) -> AppResult<()> {
+    if !confirm {
+        return Err(AppError::invalid("清除全部数据需要二次确认"));
+    }
+    {
+        let mut db = state.lock_db()?;
+        let tx = db.conn.transaction()?;
+        for table in [
+            "gift_shipment", "gift_batch", "guard_snapshot_member", "guard_snapshot",
+            "guard_event", "fan_nickname_history", "reminder_ack", "custom_reminder",
+            "ledger_entry", "activity_log", "app_settings", "import_batch", "fan_profile",
+        ] {
+            tx.execute(&format!("DELETE FROM {table}"), [])?;
+        }
+        let _ = tx.execute("DELETE FROM sqlite_sequence", []);
+        tx.commit()?;
+    }
+    crate::backup::purge_app_files(state)?;
+    crate::backup::clear_restore_marker(&state.data_dir)?;
+    crate::sync::clear_session(&state.data_dir)?;
+    for entry in std::fs::read_dir(&state.data_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() { continue; }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if (name.starts_with("vacuum-") && name.ends_with(".db")) || name == "restore-candidate.db" {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    settings::clear(&state.data_dir)?;
+    Ok(())
+}
+
 pub fn bootstrap(state: &AppState) -> AppResult<BootstrapDto> {
     let data_dir = state.data_dir.clone();
     let cfg = settings::load(&data_dir);

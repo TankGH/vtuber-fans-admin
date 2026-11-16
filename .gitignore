@@ -3,6 +3,8 @@ node_modules/
 dist/
 dist-ssr/
 out/
+tests/samples/ymd.csv
+.bilibilidoc/
 .vite/
 *.local
 
