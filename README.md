@@ -11,7 +11,7 @@
 | 功能域 | 状态 | 说明 |
 | --- | --- | --- |
 | F1 粉丝终身档案 | ✅ 可用 | UID 主键、昵称历史、手动锁定字段、同 UID 合并、敏感字段加密与脱敏；支持多选批量删除与二次确认；生日推算星座、总督/提督/舰长徽章图标，退出最新名单的成员标注「已过期」 |
-| F2 大航海名单 | ✅ 可用 | CSV / Excel 手动导入、字段映射、冲突预览、快照与购买 / 续费事件、有效期核算；快照日期可补录且拒绝未来日期；另提供用户可选启用的网页端名单快照 |
+| F2 大航海名单 | ✅ 可用 | CSV / Excel 手动导入、随包 CSV 模板导出、字段映射、冲突预览、快照与购买 / 续费事件、有效期核算；快照日期可补录且拒绝未来日期；另提供用户可选启用的网页端名单快照 |
 | F3 纪念日提醒 | ✅ 可用 | 生日 / 观看纪念日按年度循环；**两类独立开关**的上舰里程碑——百日提醒按 `100×n` 天自动延伸、周年提醒按 `n` 年自动延伸（n 为任意正整数）；用户自建纪念日（每年 / 起算后第 N 天 / 仅一次，可绑定粉丝或设为全局）；来源筛选、Windows Toast、祝福话术复制与处理标记 |
 | F4 舰礼寄送台账 | ✅ 可用 | 寄送批次、地址审核流转、逐条发货状态与快递单号、完整地址二次确认、脱敏清单导出（默认写入备份目录并显示完整路径） |
 | F5 主播记账本 | ✅ 可用 | 手动收支、大航海事件幂等归集、月度趋势图、支出关联寄送批次 |
@@ -48,8 +48,7 @@ vtuber-fans-admin/
 ├── src-tauri/                 Rust Core（Commands / 领域服务 / schema / 加密 / 备份）
 ├── scripts/                   Windows 一键打包脚本（自动加载 MSVC 环境）
 ├── release/                   预构建产物（免安装 exe 与 NSIS 安装包）
-├── tests/samples/             CSV / xlsx 导入样例
-├── tests/verification/        本地 UI 验证截图与快照（不入库）
+├── tests/                     本地验证与样例（不入库；CSV 模板可在导入页导出）
 ├── index.html / vite.config.ts / tailwind.config.ts / tsconfig*.json
 └── package.json
 ```
@@ -109,7 +108,7 @@ Rust 侧（MSVC 环境内）：`cd src-tauri; cargo check; cargo test`。
 7. 「备份恢复」：查看 7 份滚动备份、立即备份、一键恢复、导出脱敏 CSV 或加密库。
 8. 「系统设置」：切换主题、更换备份目录、配置关窗行为；如需自动抓取，主动开启开关并二次确认 → 填写房间号与每日快照时刻 → 按需扫码登录 → 立即同步一次。
 
-导入样例见 `tests/samples/`：昵称含空格、`丶` 顿号变体、生僻字与纯数字形态均原样保留，**数字形态昵称不会自动被当作 UID**。
+导入页「导出模板」可生成随应用打包的 `fans_sample.csv`：昵称含空格、`丶` 顿号变体、生僻字与纯数字形态均原样保留，**数字形态昵称不会自动被当作 UID**。
 
 ## 验证结果
 
@@ -157,7 +156,7 @@ Rust 侧（MSVC 环境内）：`cd src-tauri; cargo check; cargo test`。
 
 页面标题、顶栏品牌、面包屑、首启引导标题、主题预览卡、动态时间线与状态栏数据目录均已复核；控制台 `Errors 0 / Warnings 0`。最终复跑 `npm run build`、`npm run test`（37 通过）、`cargo check`、`cargo test`（26 通过）均通过。
 
-> **实测报告 P1–P4 已全部关闭**（`tests/out/守村人粉丝档案-v0.2测试报告.html`）：
+> **实测报告 P1–P4 已全部关闭**（本地文件 `tests/out/守村人粉丝档案-v0.2测试报告.html`，不入库）：
 > - **P1 F5 保存误报**：`ledger.rs` 在 `log_activity` 之后才取 `last_insert_rowid()`，拿到活动日志的 rowid。现改为 `INSERT` 后立即捕获 id，补回归单测（预热 12 条活动日志复现）+ 前端保存重入锁。报告实测：保存提示「账目已记录」、弹窗关闭、统计刷新、200ms 连点仅 1 条。
 > - **P2 手动导入不产生购买事件 + 未来日期静默忽略**：跨语言 DTO 断点导致 `unitMonths/priceYuan` 从未传给 Rust，事件写入又被「等级可识别 + 金额或月数」双重静默门控；快照日期输入框是未受控死控件。现补齐 12 列映射（`unitMonths/priceYuan/eventType/eventAt`）、事件写入与等级解耦、支持续费类型与真实购买日期、结果回显 `eventCount/snapshotDate/warnings`；快照日期改为受控控件并传 IPC，后端校验格式与未来日期并给出中文错误；时间基准统一为本地时间。已补 `import::commit → guard_event → ledger::sync_events` 全链路回归单测。
 > - **P3 首启双窗口**：项目无单实例保护，NSIS Finish 页默认勾选「运行应用」与手动启动叠加即产生双进程双窗口。现注册 `tauri-plugin-single-instance`（最先注册），第二实例直接退出并把已有 `main` 窗口唤起；窗口显式命名 `label: "main"`。**本机用 2026-11-15 重新打包的免安装 exe 连续启动两次（间隔 6s、再等 9s）实测：仅 1 个进程、1 个主窗口，标题「守村人·粉丝档案」、`Responding=True`**，未复现报告中的空白窗 + 业务窗；安装版 Finish 页场景仍建议按 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) §2.3 #14 在干净机器复测。
@@ -168,7 +167,7 @@ Rust 侧（MSVC 环境内）：`cd src-tauri; cargo check; cargo test`。
 ### 尚未验证的范围（如实说明）
 
 - UI 自动化验证运行于 **Vite dev server + 浏览器演示数据适配器**，不是 Tauri 原生窗口；演示数据只存在于浏览器本地，不是生产数据通道。演示适配器不会访问任何外部服务。
-- **打包已完成（v0.3.0，2026-11-16 重新打包）**：`npm run tauri:build` 成功生成并自动复制 `release/守村人·粉丝档案_0.3.0_x64-setup.exe`（4,716,936 字节，SHA-256 `DFF8A10AF02557FF52785D39F1059DA5588747DF1C634323B6CBA257F4F9D793`）与免安装 `release/vtuber-fans-admin.exe`（18,697,728 字节，SHA-256 `644BA96EEB44F1F94EFBA232AF309A6508AD0B9E52B3314FE18557416CA00560`）。**双击 exe 即可启动**，双击 setup.exe 安装后从开始菜单启动。两个文件随仓库分发；构建中间产物仍位于 `src-tauri/target/release/`。
+- **打包已完成（v0.3.0，2026-11-16 重新打包）**：`npm run tauri:build` 成功生成并自动复制 `release/守村人·粉丝档案_0.3.0_x64-setup.exe`（4,720,655 字节，SHA-256 `FF8FAC6C765B38A82D62757E47FD880A3E94A7C610DAD507B4C885FC77A99E4C`）与免安装 `release/vtuber-fans-admin.exe`（18,698,240 字节，SHA-256 `7ED80618E0CA9998C692457CA1997829A0E40117EAAE4CFB098F21849BC8DB53`）。**双击 exe 即可启动**，双击 setup.exe 安装后从开始菜单启动。两个文件随仓库分发；构建中间产物仍位于 `src-tauri/target/release/`。
 - 原生 exe 冒烟测试通过：窗口标题「守村人·粉丝档案」、进程 `Responding=True`、`%APPDATA%\com.vtuber.fans.admin` 下生成 `fans.db` / `app.key` / `settings.json`。
 - **真实 B 站账号的扫码登录与名单拉取未做人工端到端验证**（需要账号、网络与接口可用性），**因此当前不建议使用扫码自动获取**；二维码生成、WBI 签名、名单解析与 Cookie 提取已有单测覆盖，但接口变更或返回空名单时可能把当日快照写空。正式名单请使用手动导入。
 - **安装向导、托盘最小化、原生 Toast、恢复重启与 DPAPI 解密仍未做人工端到端验证**，`npm run tauri:dev` 未执行；请按 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) §2.3 清单补齐。

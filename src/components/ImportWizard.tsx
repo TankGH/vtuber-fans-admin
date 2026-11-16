@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { FileSpreadsheet, UploadCloud, AlertTriangle, CheckCircle2, FileText } from "lucide-react";
+import { FileSpreadsheet, UploadCloud, AlertTriangle, CheckCircle2, FileText, Download } from "lucide-react";
 import { Badge, Button, Card, Field, SelectField, SectionHint } from "@/components/ui";
 import { Stepper } from "@/components/Stepper";
 import { DataTable, type Column } from "@/components/DataTable";
@@ -7,6 +7,7 @@ import { StatusBanner } from "@/components/StatusBanner";
 import { callSafe, isNative } from "@/lib/ipc";
 import { DEFAULT_MAPPING, suggestMapping, parseDelimited } from "@/lib/importLogic";
 import { SAMPLE_CSV } from "@/lib/demoData";
+import FANS_SAMPLE_TEMPLATE from "@/assets/fans_sample.csv?raw";
 import type { ImportMapping, ImportPreview, ImportResult, ImportRowDto } from "@/types/dto";
 
 const STEPS = ["选择文件", "字段映射", "冲突预览", "确认写入"];
@@ -95,6 +96,18 @@ export function ImportWizard({ onFinished }: { onFinished: (result: ImportResult
 
   const useSample = () => loadText("fans_sample.csv（内置样例）", SAMPLE_CSV);
 
+  const downloadTemplate = () => {
+    const blob = new Blob(["\uFEFF", FANS_SAMPLE_TEMPLATE], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "fans_sample.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
   const parsePreview = async () => {
     if (!file || !validateDate()) return;
     setBusy(true);
@@ -154,14 +167,15 @@ export function ImportWizard({ onFinished }: { onFinished: (result: ImportResult
               <p className="text-xs text-muted max-w-lg leading-relaxed">
                 建议表头包含 uid、nickname、guard_level、rank 等列。预览阶段不会写入任何数据，确认后才在单事务内批量写入。
               </p>
-              <div className="flex gap-2 mt-2">
+              <div className="flex flex-wrap justify-center gap-2 mt-2">
                 <Button variant="primary" disabled={busy} onClick={onPick}>选择文件</Button>
                 <Button onClick={useSample}>使用内置样例</Button>
+                <Button onClick={downloadTemplate}><Download size={14} /> 导出模板</Button>
               </div>
             </div>
             <div className="flex items-start gap-2 text-xs text-muted">
               <FileText size={14} className="mt-0.5 shrink-0" />
-              <span>样例文件另见 <code className="text-accent">tests/samples/fans_sample.csv</code>，含「雪之下 雪乃」「时崎丶狂三」与一条缺少 UID 的错误行。</span>
+              <span>导出的模板与内置样例内容一致，已随应用打包；含「雪之下 雪乃」「时崎丶狂三」与一条缺少 UID 的错误行。</span>
             </div>
           </div>
         )}
