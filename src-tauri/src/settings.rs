@@ -1,0 +1,127 @@
+use std::path::Path;
+
+use crate::error::{AppError, AppResult};
+use crate::models::{SettingsDto, SettingsInput};
+
+const FILE_NAME: &str = "settings.json";
+
+fn default_backup_dir() -> String {
+    let home = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\Default".to_string());
+    format!("{home}\\Documents\\vtuber-fans-admin-backups")
+}
+
+impl Default for SettingsDto {
+    fn default() -> Self {
+        Self {
+            theme: "galaxy".to_string(),
+            backup_dir: default_backup_dir(),
+            minimize_to_tray: true,
+            launch_at_startup: false,
+            birthday_year_hidden: true,
+            data_dir: String::new(),
+            onboarding_done: false,
+            reminder_days_ahead: 3,
+            milestone_hundreds_enabled: true,
+            milestone_years_enabled: true,
+        }
+    }
+}
+
+impl SettingsDto {
+    pub fn to_dto(&self, data_dir: &Path) -> SettingsDto {
+        let mut dto = self.clone();
+        dto.data_dir = data_dir.to_string_lossy().to_string();
+        dto
+    }
+}
+
+pub fn path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join(FILE_NAME)
+}
+
+pub fn load(data_dir: &Path) -> SettingsDto {
+    let p = path(data_dir);
+    let mut cfg = SettingsDto::default();
+    if p.exists() {
+        if let Ok(raw) = std::fs::read_to_string(&p) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(v) = parsed.get("theme").and_then(|v| v.as_str()) { cfg.theme = v.to_string(); }
+                if let Some(v) = parsed.get("backupDir").and_then(|v| v.as_str()) { cfg.backup_dir = v.to_string(); }
+                if let Some(v) = parsed.get("minimizeToTray").and_then(|v| v.as_bool()) { cfg.minimize_to_tray = v; }
+                if let Some(v) = parsed.get("launchAtStartup").and_then(|v| v.as_bool()) { cfg.launch_at_startup = v; }
+                if let Some(v) = parsed.get("birthdayYearHidden").and_then(|v| v.as_bool()) { cfg.birthday_year_hidden = v; }
+                if let Some(v) = parsed.get("onboardingDone").and_then(|v| v.as_bool()) { cfg.onboarding_done = v; }
+                if let Some(v) = parsed.get("reminderDaysAhead").and_then(|v| v.as_i64()) { cfg.reminder_days_ahead = v as i32; }
+                // v0.2 早期版本用 milestoneDays 数组配置天数节点；升级后统一为两个独立开关
+                if let Some(v) = parsed.get("milestoneHundredsEnabled").and_then(|v| v.as_bool()) {
+                    cfg.milestone_hundreds_enabled = v;
+                } else if let Some(arr) = parsed.get("milestoneDays").and_then(|v| v.as_array()) {
+                    cfg.milestone_hundreds_enabled = !arr.is_empty();
+                }
+                if let Some(v) = parsed.get("milestoneYearsEnabled").and_then(|v| v.as_bool()) { cfg.milestone_years_enabled = v; }
+            }
+        }
+    }
+    cfg.data_dir = data_dir.to_string_lossy().to_string();
+    cfg
+}
+
+pub fn save(data_dir: &Path, cfg: &SettingsDto) -> AppResult<()> {
+    let body = serde_json::json!({
+        "theme": cfg.theme,
+        "backupDir": cfg.backup_dir,
+        "minimizeToTray": cfg.minimize_to_tray,
+        "launchAtStartup": cfg.launch_at_startup,
+        "birthdayYearHidden": cfg.birthday_year_hidden,
+        "onboardingDone": cfg.onboarding_done,
+        "reminderDaysAhead": cfg.reminder_days_ahead,
+        "milestoneHundredsEnabled": cfg.milestone_hundreds_enabled,
+        "milestoneYearsEnabled": cfg.milestone_years_enabled,
+    });
+    std::fs::write(path(data_dir), serde_json::to_string_pretty(&body)?)
+        .map_err(|e| AppError::new("E_BACKUP_DIR", format!("配置写入失败：{e}")))?;
+    Ok(())
+}
+
+pub fn update(data_dir: &Path, input: SettingsInput) -> AppResult<SettingsDto> {
+    let mut cfg = load(data_dir);
+    if let Some(v) = input.theme {
+        if !["galaxy", "mist", "aurora"].contains(&v.as_str()) {
+            return Err(AppError::invalid("主题值无效"));
+        }
+        cfg.theme = v;
+    }
+    if let Some(v) = input.backup_dir {
+        if v.trim().is_empty() {
+            return Err(AppError::new("E_BACKUP_DIR", "备份目录不能为空"));
+        }
+        cfg.backup_dir = v;
+    }
+    if let Some(v) = input.minimize_to_tray { cfg.minimize_to_tray = v; }
+    if let Some(v) = input.launch_at_startup { cfg.launch_at_startup = v; }
+    if let Some(v) = input.birthday_year_hidden { cfg.birthday_year_hidden = v; }
+    if let Some(v) = input.onboarding_done { cfg.onboarding_done = v; }
+    if let Some(v) = input.reminder_days_ahead {
+        if !(0..=14).contains(&v) { return Err(AppError::invalid("提醒提前天数需在 0–14 之间")); }
+        cfg.reminder_days_ahead = v;
+    }
+    if let Some(v) = input.milestone_hundreds_enabled { cfg.milestone_hundreds_enabled = v; }
+    if let Some(v) = input.milestone_years_enabled { cfg.milestone_years_enabled = v; }
+    save(data_dir, &cfg)?;
+    Ok(cfg)
+}
+
+pub fn backup_root(data_dir: &Path) -> std::path::PathBuf {
+    let cfg = load(data_dir);
+    std::path::PathBuf::from(cfg.backup_dir)
+}
+
+/// 清除全部数据时移除配置文件，下次启动回到默认设置与首启引导
+pub fn clear(data_dir: &Path) -> AppResult<()> {
+    let p = path(data_dir);
+    if p.exists() {
+        std::fs::remove_file(p)
+            .map_err(|e| AppError::new("E_BACKUP_DIR", format!("配置文件清除失败：{e}")))?;
+    }
+    Ok(())
+}

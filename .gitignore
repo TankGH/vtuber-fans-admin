@@ -1,0 +1,52 @@
+# ---- Node / Vite ----
+node_modules/
+dist/
+dist-ssr/
+out/
+tests/
+.vite/
+*.local
+
+# ---- Rust / Tauri ----
+src-tauri/target/
+target/
+**/*.rs.bk
+**/*.rmeta
+src-tauri/gen/
+# Cargo.lock 需提交（桌面应用要求可复现构建）
+
+# ---- 本地数据、密钥与备份产物（数据主权本地化，绝不入库）----
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlcipher
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+backups/
+*.bak
+*.zip
+*.tar.gz
+
+# ---- 日志与系统文件 ----
+*.log
+logs/
+.DS_Store
+Thumbs.db
+.playwright-cli/
+
+# ---- 本地验证产物（含历史界面记录，不入库）----
+tests/verification/
+
+# ---- IDE 缓存与加密备份文件 ----
+.codebuddy/
+*.enc
+
+# ---- 构建产物按需本地生成，不入库 ----
+release/*.exe
+release/*.msi
